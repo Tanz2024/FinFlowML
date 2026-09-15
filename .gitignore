@@ -8,4 +8,5 @@ models/
 data/raw/
 data/processed/
 ml/data/processed/
+results/baseline/
 results/*.tmp

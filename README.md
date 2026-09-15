@@ -14,6 +14,17 @@ python -m ml.data.build_metadata
 
 This writes ignored metadata under `data/processed/` and preserves raw and normalized extraction targets without serializing image bytes.
 
+## Stage 3 baseline benchmark
+
+The baseline benchmark uses the instruction-tuned `Qwen/Qwen3-4B-Instruct-2507` model with OCR text only. It does not train or fine-tune model weights. The same model is reserved for Stage 4 LoRA/QLoRA comparison. After installing requirements, run the required smoke tests in order:
+
+```bash
+python -m ml.evaluation.benchmark --limit 3
+python -m ml.evaluation.benchmark --limit 10
+```
+
+Outputs are ignored under `results/baseline/` and include exact raw model responses, parsed predictions, inference times, runtime metadata, metrics, and error analysis fields. A full 347-document benchmark is intentionally not run during Stage 3 implementation.
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
