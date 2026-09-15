@@ -56,3 +56,10 @@ def test_assistant_only_loss_masks_prompt():
     tokens = assistant_only_tokens(example, Tokenizer())
     assert tokens["labels"] == [-100, -100, 2, 3]
     verify_assistant_only_mask(example, Tokenizer())
+
+
+def test_smoke_example_validation_rejects_empty_assistant_labels():
+    from ml.training.train import _validate_smoke_example
+
+    with pytest.raises(ValueError, match="no assistant response"):
+        _validate_smoke_example({"input_ids": [1], "attention_mask": [1], "labels": [-100]})

@@ -1,6 +1,7 @@
 import argparse
 import gc
 import json
+import math
 import time
 from pathlib import Path
 
@@ -56,6 +57,55 @@ class _Collator:
         return batch
 
 
+def _validate_smoke_example(encoded):
+    import math
+    for name in ("input_ids", "attention_mask", "labels"):
+        values = encoded[name]
+        if not values or any(not isinstance(value, int) for value in values):
+            raise ValueError(f"smoke {name} contains malformed values")
+        if any(not math.isfinite(value) for value in values):
+            raise ValueError(f"smoke {name} contains non-finite values")
+    if not any(label != -100 for label in encoded["labels"]):
+        raise ValueError("first smoke example has no assistant response labels")
+
+
+class _GradientDiagnostics:
+    def __init__(self, TrainerCallback):
+        class Callback(TrainerCallback):
+            def __init__(self):
+                self.records = []
+                self.step_events = []
+                self.weight_before = None
+
+            def _weights(self, model):
+                return [parameter.detach().flatten()[:4].float().cpu().tolist()
+                        for parameter in model.parameters() if parameter.requires_grad][:8]
+
+            def on_pre_optimizer_step(self, args, state, control, model=None, **kwargs):
+                import torch
+                tensors = [parameter.grad.detach() for parameter in model.parameters()
+                           if parameter.requires_grad and parameter.grad is not None]
+                finite = [value for tensor in tensors for value in tensor.detach().float().abs().flatten().tolist()
+                          if torch.isfinite(torch.tensor(value))]
+                self.records.append({"global_step": state.global_step,
+                    "tensors_with_gradients": len(tensors),
+                    "tensors_with_nan": sum(torch.isnan(tensor).any().item() for tensor in tensors),
+                    "tensors_with_inf": sum(torch.isinf(tensor).any().item() for tensor in tensors),
+                    "maximum_absolute_finite_gradient": max(finite, default=None)})
+                if self.weight_before is None:
+                    self.weight_before = self._weights(model)
+
+            def on_optimizer_step(self, args, state, control, **kwargs):
+                self.step_events.append({"global_step": state.global_step, "optimizer_step_called": True})
+
+            def on_step_end(self, args, state, control, model=None, **kwargs):
+                if self.step_events:
+                    self.step_events[-1]["global_step_after"] = state.global_step
+                    self.step_events[-1]["weight_sample_changed"] = self.weight_before != self._weights(model) if self.weight_before else False
+
+        self.callback = Callback()
+
+
 def _generate(model, tokenizer, examples, max_length):
     outputs = []
     for example in examples:
@@ -79,14 +129,25 @@ def smoke_test(config: TrainingConfig) -> dict[str, object]:
     from datasets import Dataset
     from transformers import Trainer, TrainingArguments
     encoded_train = Dataset.from_list([assistant_only_tokens(example, tokenizer) for example in smoke_train])
+    _validate_smoke_example(encoded_train[0])
+    from transformers import TrainerCallback
+    diagnostics = _GradientDiagnostics(TrainerCallback=TrainerCallback)
     args = TrainingArguments(output_dir=str(Path(config.output_dir) / "smoke_work"), max_steps=config.smoke_steps,
         per_device_train_batch_size=1, gradient_accumulation_steps=1, learning_rate=config.learning_rate,
         logging_steps=1, save_strategy="no", report_to=[], fp16=hardware["fp16"], bf16=hardware["bf16"],
         optim=config.optimizer, gradient_checkpointing=config.gradient_checkpointing)
-    trainer = Trainer(model=model, args=args, train_dataset=encoded_train,
+    trainer = Trainer(model=model, args=args, train_dataset=encoded_train, callbacks=[diagnostics.callback],
                       data_collator=_Collator(tokenizer, config.max_seq_length))
     result = trainer.train()
     losses = [entry["loss"] for entry in trainer.state.log_history if "loss" in entry]
+    grad_norms = [entry["grad_norm"] for entry in trainer.state.log_history if "grad_norm" in entry]
+    intended_steps = min(config.smoke_steps, len(encoded_train))
+    skipped_steps = max(0, intended_steps - len(diagnostics.callback.step_events))
+    trainer_global_step = trainer.state.global_step
+    persistent_nonfinite = any(record["tensors_with_nan"] or record["tensors_with_inf"] for record in diagnostics.callback.records[-2:])
+    if persistent_nonfinite or skipped_steps:
+        raise RuntimeError("smoke diagnostics found persistent non-finite gradients or a skipped optimizer update")
+    scaler = getattr(getattr(trainer, "accelerator", None), "scaler", None)
     adapter_dir = Path(config.output_dir).parent / "training" / "smoke_adapter"
     adapter_dir.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(adapter_dir)
@@ -124,6 +185,14 @@ def smoke_test(config: TrainingConfig) -> dict[str, object]:
         "validation_metrics": smoke_metrics, "validation_metrics_detail": validation_result,
         "adapter_dir": str(adapter_dir),
         "quantization": {"load_in_4bit": True, "nf4": True, "double_quantization": True},
+        "gradient_diagnostics": {"all_logged_grad_norms_finite": all(math.isfinite(float(value)) for value in grad_norms),
+            "logged_grad_norms": grad_norms, "intended_optimizer_steps": intended_steps,
+            "optimizer_steps_applied": len(diagnostics.callback.step_events),
+            "trainer_global_step": trainer_global_step,
+            "optimizer_events": diagnostics.callback.step_events,
+            "pre_optimizer_gradients": diagnostics.callback.records,
+            "amp_grad_scaler": {"available": scaler is not None, "state": repr(scaler.state_dict()) if scaler else None},
+            "persistent_nonfinite_gradients": persistent_nonfinite, "skipped_optimizer_steps": skipped_steps},
         "duration_seconds": time.perf_counter() - started}
     output = Path(config.output_dir) / "smoke_metadata.json"
     output.parent.mkdir(parents=True, exist_ok=True)
