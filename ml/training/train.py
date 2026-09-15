@@ -1,45 +1,130 @@
 import argparse
+import gc
 import json
 import time
 from pathlib import Path
 
+from ml.evaluation.validation import evaluate_validation_predictions
+from ml.extraction.parser import parse_prediction
 from ml.training.config import TrainingConfig
-from ml.training.dataset import load_train_validation, token_length_statistics
+from ml.training.dataset import (
+    assistant_only_tokens,
+    load_train_validation,
+    token_length_statistics,
+    verify_assistant_only_mask,
+)
 
 
 def hardware_config():
     import torch
-
     if not torch.cuda.is_available():
         raise RuntimeError("Stage 4 QLoRA requires a CUDA NVIDIA GPU; MPS/CPU is not supported")
     major, _ = torch.cuda.get_device_capability()
     bf16 = torch.cuda.is_bf16_supported() and major >= 8
-    return {"compute_dtype": torch.bfloat16 if bf16 else torch.float16, "bf16": bf16, "fp16": not bf16, "device": torch.cuda.get_device_name(0), "cuda_version": torch.version.cuda}
+    return {"compute_dtype": torch.bfloat16 if bf16 else torch.float16, "bf16": bf16,
+            "fp16": not bf16, "device": torch.cuda.get_device_name(0),
+            "cuda_version": torch.version.cuda, "device_index": 0}
 
 
 def load_quantized_model(config: TrainingConfig):
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-
     hardware = hardware_config()
-    quantization = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_use_double_quant=True, bnb_4bit_compute_dtype=hardware["compute_dtype"])
+    quantization = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
+        bnb_4bit_use_double_quant=True, bnb_4bit_compute_dtype=hardware["compute_dtype"])
     tokenizer = AutoTokenizer.from_pretrained(config.model_id, revision=config.model_revision)
-    model = AutoModelForCausalLM.from_pretrained(config.model_id, revision=config.model_revision, quantization_config=quantization, device_map={"": 0})
+    model = AutoModelForCausalLM.from_pretrained(config.model_id, revision=config.model_revision,
+        quantization_config=quantization, device_map={"": 0})
     model = prepare_model_for_kbit_training(model)
-    model = get_peft_model(model, LoraConfig(r=config.lora_r, lora_alpha=config.lora_alpha, lora_dropout=config.lora_dropout, target_modules=list(config.target_modules), task_type="CAUSAL_LM"))
+    model = get_peft_model(model, LoraConfig(r=config.lora_r, lora_alpha=config.lora_alpha,
+        lora_dropout=config.lora_dropout, target_modules=list(config.target_modules), task_type="CAUSAL_LM"))
     return model, tokenizer, hardware, quantization
+
+
+class _Collator:
+    def __init__(self, tokenizer, max_length):
+        self.tokenizer, self.max_length = tokenizer, max_length
+
+    def __call__(self, examples):
+        import torch
+        encoded = [dict(item) for item in examples]
+        max_len = min(self.max_length, max(len(item["input_ids"]) for item in encoded))
+        batch = {}
+        for key in ("input_ids", "labels", "attention_mask"):
+            pad = 0 if key == "attention_mask" else -100
+            batch[key] = torch.tensor([item[key][:max_len] + [pad] * (max_len - len(item[key])) for item in encoded])
+        return batch
+
+
+def _generate(model, tokenizer, examples, max_length):
+    outputs = []
+    for example in examples:
+        prompt = tokenizer.apply_chat_template(example.messages[:1], tokenize=False, add_generation_prompt=True)
+        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+        generated = model.generate(**inputs, max_new_tokens=max_length, do_sample=False)
+        outputs.append(tokenizer.decode(generated[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True).strip())
+    return outputs
 
 
 def smoke_test(config: TrainingConfig) -> dict[str, object]:
     config.validate()
     started = time.perf_counter()
     train, validation = load_train_validation(config.dataset_id, config.seed)
-    model, tokenizer, hardware, quantization = load_quantized_model(config)
+    smoke_train, smoke_validation = train[:config.smoke_train_examples], validation[:5]
+    model, tokenizer, hardware, _ = load_quantized_model(config)
     stats = token_length_statistics(train + validation, tokenizer)
     if stats["exceeding_2048"]:
         raise ValueError("Training examples exceed max_seq_length; refusing silent truncation")
-    model.print_trainable_parameters()
-    metadata = {"model_id": config.model_id, "revision": config.model_revision, "dataset_id": config.dataset_id, "seed": config.seed, "hardware": {key: str(value) for key, value in hardware.items()}, "quantization": {"load_in_4bit": True, "bnb_4bit_quant_type": "nf4", "bnb_4bit_use_double_quant": True, "bnb_4bit_compute_dtype": str(hardware["compute_dtype"])}, "token_length_statistics": stats, "train_examples": len(train), "validation_examples": len(validation), "duration_seconds": time.perf_counter() - started}
+    verify_assistant_only_mask(smoke_train[0], tokenizer)
+    from datasets import Dataset
+    from transformers import Trainer, TrainingArguments
+    encoded_train = Dataset.from_list([assistant_only_tokens(example, tokenizer) for example in smoke_train])
+    args = TrainingArguments(output_dir=str(Path(config.output_dir) / "smoke_work"), max_steps=config.smoke_steps,
+        per_device_train_batch_size=1, gradient_accumulation_steps=1, learning_rate=config.learning_rate,
+        logging_steps=1, save_strategy="no", report_to=[], fp16=hardware["fp16"], bf16=hardware["bf16"],
+        optim=config.optimizer, gradient_checkpointing=config.gradient_checkpointing)
+    trainer = Trainer(model=model, args=args, train_dataset=encoded_train,
+                      data_collator=_Collator(tokenizer, config.max_seq_length))
+    result = trainer.train()
+    losses = [entry["loss"] for entry in trainer.state.log_history if "loss" in entry]
+    adapter_dir = Path(config.output_dir).parent / "training" / "smoke_adapter"
+    adapter_dir.mkdir(parents=True, exist_ok=True)
+    model.save_pretrained(adapter_dir)
+    tokenizer.save_pretrained(adapter_dir)
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    del trainer, model
+    gc.collect()
+    import torch
+    torch.cuda.empty_cache()
+    reloaded, reload_tokenizer, _, _ = load_quantized_model(config)
+    reloaded.load_adapter(str(adapter_dir), adapter_name="default")
+    raw_outputs = _generate(reloaded, reload_tokenizer, smoke_validation, config.max_seq_length)
+    validation_result = evaluate_validation_predictions(smoke_validation, raw_outputs)
+    smoke_metrics = {
+        "valid_output_rate": validation_result["valid_structured_output_rate"],
+        "company_accuracy": validation_result["normalized_exact_match_per_field"]["company"],
+        "date_accuracy": validation_result["normalized_exact_match_per_field"]["date"],
+        "address_accuracy": validation_result["normalized_exact_match_per_field"]["address"],
+        "total_accuracy": validation_result["normalized_exact_match_per_field"]["total"],
+        "macro_accuracy": validation_result["normalized_macro_field_accuracy"],
+    }
+    for example, raw in zip(smoke_validation, raw_outputs, strict=True):
+        prediction, _ = parse_prediction(raw)
+        incorrect = [field for field in example.raw_targets if not prediction or prediction.get(field) != example.raw_targets[field]]
+        print(json.dumps({"example_id": example.example_id, "ground_truth": example.raw_targets,
+                          "raw_generated_output": raw, "parsed_prediction": prediction,
+                          "incorrect_fields": incorrect}, ensure_ascii=False))
+    del reloaded
+    gc.collect()
+    torch.cuda.empty_cache()
+    metadata = {"starting_loss": losses[0] if losses else result.training_loss, "training_losses": losses,
+        "final_smoke_loss": losses[-1] if losses else result.training_loss, "trainable_parameters": trainable,
+        "gpu": {key: str(value) for key, value in hardware.items()}, "train_examples": len(smoke_train),
+        "validation_examples": len(smoke_validation), "official_test_split_loaded": False,
+        "validation_metrics": smoke_metrics, "validation_metrics_detail": validation_result,
+        "adapter_dir": str(adapter_dir),
+        "quantization": {"load_in_4bit": True, "nf4": True, "double_quantization": True},
+        "duration_seconds": time.perf_counter() - started}
     output = Path(config.output_dir) / "smoke_metadata.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
@@ -51,7 +136,7 @@ def main() -> None:
     parser.add_argument("--smoke", action="store_true")
     args = parser.parse_args()
     if not args.smoke:
-        raise SystemExit("Full training is intentionally not enabled in the Stage 4 infrastructure smoke phase")
+        raise SystemExit("Full training is intentionally not enabled")
     print(json.dumps(smoke_test(TrainingConfig()), indent=2))
 
 

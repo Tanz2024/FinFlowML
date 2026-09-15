@@ -9,4 +9,6 @@ data/raw/
 data/processed/
 ml/data/processed/
 results/baseline/
+results/training/
+results/stage4/
 results/*.tmp

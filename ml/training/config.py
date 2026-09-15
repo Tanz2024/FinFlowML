@@ -22,6 +22,8 @@ class TrainingConfig:
     lora_dropout: float = 0.05
     target_modules: tuple[str, ...] = field(default_factory=lambda: ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"))
     output_dir: str = "results/stage4"
+    smoke_train_examples: int = 12
+    smoke_steps: int = 4
 
     def validate(self) -> None:
         if self.max_seq_length <= 0 or self.train_batch_size != 1:
@@ -30,3 +32,5 @@ class TrainingConfig:
             raise ValueError("Stage 4 requires paged_adamw_8bit and packing=False")
         if not self.target_modules:
             raise ValueError("At least one LoRA target module is required")
+        if self.smoke_train_examples <= 0 or self.smoke_steps <= 0:
+            raise ValueError("smoke_train_examples and smoke_steps must be positive")

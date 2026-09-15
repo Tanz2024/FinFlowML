@@ -45,6 +45,16 @@ def assistant_only_tokens(example: TrainingExample, tokenizer: Any) -> dict[str,
     return {"input_ids": full_ids, "labels": labels, "attention_mask": [1] * len(full_ids)}
 
 
+def verify_assistant_only_mask(example: TrainingExample, tokenizer: Any) -> None:
+    encoded = assistant_only_tokens(example, tokenizer)
+    prompt_text = tokenizer.apply_chat_template(example.messages[:1], tokenize=False, add_generation_prompt=True)
+    prompt_length = len(tokenizer(prompt_text, add_special_tokens=False)["input_ids"])
+    if encoded["labels"][:prompt_length] != [-100] * prompt_length:
+        raise ValueError("assistant-only loss mask does not mask the complete prompt")
+    if not any(label != -100 for label in encoded["labels"][prompt_length:]):
+        raise ValueError("assistant-only loss mask contains no assistant response tokens")
+
+
 def token_length_statistics(examples: list[TrainingExample], tokenizer: Any) -> dict[str, int | float]:
     lengths = []
     for example in examples:

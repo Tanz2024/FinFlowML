@@ -1,7 +1,12 @@
 import pytest
 
 from ml.training.config import TrainingConfig
-from ml.training.dataset import assistant_only_tokens, format_training_example, target_json
+from ml.training.dataset import (
+    assistant_only_tokens,
+    format_training_example,
+    target_json,
+    verify_assistant_only_mask,
+)
 
 
 def test_training_format_uses_raw_targets_and_assistant_response():
@@ -50,3 +55,4 @@ def test_assistant_only_loss_masks_prompt():
     example = format_training_example(["ACME"], {"company": "ACME", "date": None, "address": None, "total": None}, "train:1", "fp")
     tokens = assistant_only_tokens(example, Tokenizer())
     assert tokens["labels"] == [-100, -100, 2, 3]
+    verify_assistant_only_mask(example, Tokenizer())
