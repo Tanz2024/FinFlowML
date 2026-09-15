@@ -63,3 +63,14 @@ def test_smoke_example_validation_rejects_empty_assistant_labels():
 
     with pytest.raises(ValueError, match="no assistant response"):
         _validate_smoke_example({"input_ids": [1], "attention_mask": [1], "labels": [-100]})
+
+
+def test_full_training_selection_and_amp_classification():
+    from ml.training.train import classify_amp_records, select_best_validation
+
+    history = [{"epoch": 1, "normalized_macro_field_accuracy": 0.2},
+               {"epoch": 2, "normalized_macro_field_accuracy": 0.4}]
+    assert select_best_validation(history)["epoch"] == 2
+    records = [{"tensors_with_nan": 1, "tensors_with_inf": 0},
+               {"tensors_with_nan": 0, "tensors_with_inf": 0}]
+    assert classify_amp_records(records) == {"initial_overflow": True, "persistent_after_recovery": False}

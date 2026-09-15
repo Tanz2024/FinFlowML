@@ -200,13 +200,129 @@ def smoke_test(config: TrainingConfig) -> dict[str, object]:
     return metadata
 
 
+def _metric_summary(result):
+    fields = result["normalized_exact_match_per_field"]
+    return {"valid_structured_output_rate": result["valid_structured_output_rate"],
+            "company_accuracy": fields["company"], "date_accuracy": fields["date"],
+            "address_accuracy": fields["address"], "total_accuracy": fields["total"],
+            "normalized_macro_field_accuracy": result["normalized_macro_field_accuracy"],
+            "all_fields_correct_rate": result["all_fields_correct_rate"]}
+
+
+def select_best_validation(history):
+    return max(history, key=lambda entry: entry["normalized_macro_field_accuracy"])
+
+
+def classify_amp_records(records):
+    later = records[1:]
+    return {"initial_overflow": bool(records and (records[0]["tensors_with_nan"] or records[0]["tensors_with_inf"])),
+            "persistent_after_recovery": sum(record["tensors_with_nan"] or record["tensors_with_inf"] for record in later) >= 2}
+
+
+def full_train(config: TrainingConfig) -> dict[str, object]:
+    config.validate()
+    started = time.perf_counter()
+    train, validation = load_train_validation(config.dataset_id, config.seed)
+    if len(train) != 563 or len(validation) != 63:
+        raise ValueError(f"unexpected Stage 4 split sizes: train={len(train)}, validation={len(validation)}")
+    model, tokenizer, hardware, _ = load_quantized_model(config)
+    model.config.use_cache = False
+    stats = token_length_statistics(train + validation, tokenizer)
+    if stats["exceeding_2048"]:
+        raise ValueError("Training examples exceed max_seq_length; refusing silent truncation")
+    verify_assistant_only_mask(train[0], tokenizer)
+    from datasets import Dataset
+    from transformers import Trainer, TrainerCallback, TrainingArguments
+    encoded_train = Dataset.from_list([assistant_only_tokens(example, tokenizer) for example in train])
+    _validate_smoke_example(encoded_train[0])
+    output_root = Path(config.output_dir).parent / "training"
+    output_root.mkdir(parents=True, exist_ok=True)
+    diagnostics = _GradientDiagnostics(TrainerCallback)
+    validation_history = []
+
+    class ValidationCallback(TrainerCallback):
+        def on_epoch_end(self, args, state, control, model=None, **kwargs):
+            model.config.use_cache = True
+            raw_outputs = _generate(model, tokenizer, validation, config.max_seq_length)
+            result = evaluate_validation_predictions(validation, raw_outputs)
+            epoch = int(round(state.epoch))
+            adapter_dir = output_root / f"epoch_{epoch}_adapter"
+            model.save_pretrained(adapter_dir)
+            validation_history.append({"epoch": epoch, **_metric_summary(result)})
+            model.config.use_cache = False
+            return control
+
+    args = TrainingArguments(output_dir=str(output_root / "work"), num_train_epochs=config.epochs,
+        per_device_train_batch_size=config.train_batch_size, gradient_accumulation_steps=config.gradient_accumulation_steps,
+        learning_rate=config.learning_rate, warmup_ratio=config.warmup_ratio, lr_scheduler_type=config.scheduler,
+        logging_steps=1, save_strategy="no", report_to=[], fp16=hardware["fp16"], bf16=hardware["bf16"],
+        optim=config.optimizer, gradient_checkpointing=config.gradient_checkpointing, seed=config.seed)
+    trainer = Trainer(model=model, args=args, train_dataset=encoded_train,
+                      data_collator=_Collator(tokenizer, config.max_seq_length),
+                      callbacks=[diagnostics.callback, ValidationCallback()])
+    result = trainer.train()
+    if len(validation_history) != config.epochs:
+        raise RuntimeError("validation did not run at every training epoch")
+    if not all(math.isfinite(float(entry["loss"])) for entry in trainer.state.log_history if "loss" in entry):
+        raise RuntimeError("training loss became non-finite")
+    amp_classification = classify_amp_records(diagnostics.callback.records)
+    if amp_classification["persistent_after_recovery"]:
+        raise RuntimeError("non-finite gradients persisted after initial scaler recovery")
+    best = select_best_validation(validation_history)
+    training_history = list(trainer.state.log_history)
+    best_dir = output_root / "best_adapter"
+    import shutil
+    if best_dir.exists():
+        shutil.rmtree(best_dir)
+    shutil.copytree(output_root / f"epoch_{best['epoch']}_adapter", best_dir)
+    model.config.use_cache = True
+    del trainer, model
+    gc.collect()
+    import torch
+    torch.cuda.empty_cache()
+    reloaded, reload_tokenizer, _, _ = load_quantized_model(config)
+    reloaded.load_adapter(str(best_dir), adapter_name="default")
+    final_result = evaluate_validation_predictions(validation,
+        _generate(reloaded, reload_tokenizer, validation, config.max_seq_length))
+    final_metrics = _metric_summary(final_result)
+    if final_metrics["normalized_macro_field_accuracy"] != best["normalized_macro_field_accuracy"]:
+        raise RuntimeError("reloaded best adapter did not reproduce selected validation result")
+    versions = {}
+    from importlib.metadata import version
+    for package in ("torch", "transformers", "peft", "bitsandbytes"):
+        try:
+            versions[package] = version(package)
+        except Exception:
+            versions[package] = "unavailable"
+    metadata = {"model_id": config.model_id, "model_revision": config.model_revision,
+        "dataset_id": config.dataset_id, "seed": config.seed, "cuda_version": hardware["cuda_version"],
+        "gpu": hardware["device"], "versions": versions, "qlora": {"r": config.lora_r, "alpha": config.lora_alpha,
+        "dropout": config.lora_dropout, "target_modules": list(config.target_modules), "nf4": True, "double_quantization": True,
+        "compute_dtype": str(hardware["compute_dtype"])}, "training_config": config.__dict__,
+        "train_examples": len(train), "validation_examples": len(validation), "token_statistics": stats,
+        "validation_history": validation_history, "best_epoch": best["epoch"], "best_validation": best,
+        "reloaded_best_validation": final_metrics, "official_test_split_loaded": False,
+        "amp_diagnostics": {"records": diagnostics.callback.records, "classification": amp_classification,
+        "optimizer_callback_events": diagnostics.callback.step_events,
+        "effective_parameter_updates": sum(event.get("weight_sample_changed", False) for event in diagnostics.callback.step_events)},
+        "training_loss": result.training_loss, "runtime_seconds": time.perf_counter() - started}
+    (output_root / "training_history.json").write_text(json.dumps(training_history, indent=2) + "\n", encoding="utf-8")
+    (output_root / "validation_history.json").write_text(json.dumps(validation_history, indent=2) + "\n", encoding="utf-8")
+    (output_root / "training_metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    del reloaded
+    gc.collect()
+    torch.cuda.empty_cache()
+    return metadata
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--train", action="store_true")
     args = parser.parse_args()
-    if not args.smoke:
-        raise SystemExit("Full training is intentionally not enabled")
-    print(json.dumps(smoke_test(TrainingConfig()), indent=2))
+    if args.smoke == args.train:
+        raise SystemExit("choose exactly one of --smoke or --train")
+    print(json.dumps(smoke_test(TrainingConfig()) if args.smoke else full_train(TrainingConfig()), indent=2))
 
 
 if __name__ == "__main__":
