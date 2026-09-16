@@ -77,23 +77,32 @@ class _GradientDiagnostics:
                 self.step_events = []
                 self.weight_before = None
 
-            def _weights(self, model):
-                return [parameter.detach().flatten()[:4].float().cpu().tolist()
+            def _weight_samples(self, model):
+                """Return scalar GPU-side samples sufficient to detect updates."""
+                return [parameter.detach().float().mean().item()
                         for parameter in model.parameters() if parameter.requires_grad][:8]
 
             def on_pre_optimizer_step(self, args, state, control, model=None, **kwargs):
                 import torch
                 tensors = [parameter.grad.detach() for parameter in model.parameters()
                            if parameter.requires_grad and parameter.grad is not None]
-                finite = [value for tensor in tensors for value in tensor.detach().float().abs().flatten().tolist()
-                          if torch.isfinite(torch.tensor(value))]
+                nan_count = sum(torch.isnan(tensor).any().item() for tensor in tensors)
+                inf_count = sum(torch.isinf(tensor).any().item() for tensor in tensors)
+                detailed = len(self.records) < 8 or nan_count > 0 or inf_count > 0
+                maximum = None
+                if detailed:
+                    finite_maxima = []
+                    for tensor in tensors:
+                        values = tensor.detach().float()
+                        finite_maxima.append(torch.where(torch.isfinite(values), values.abs(), 0).amax())
+                    if finite_maxima:
+                        maximum = torch.stack(finite_maxima).amax().item()
                 self.records.append({"global_step": state.global_step,
-                    "tensors_with_gradients": len(tensors),
-                    "tensors_with_nan": sum(torch.isnan(tensor).any().item() for tensor in tensors),
-                    "tensors_with_inf": sum(torch.isinf(tensor).any().item() for tensor in tensors),
-                    "maximum_absolute_finite_gradient": max(finite, default=None)})
+                    "tensors_with_gradients": len(tensors), "tensors_with_nan": nan_count,
+                    "tensors_with_inf": inf_count, "maximum_absolute_finite_gradient": maximum,
+                    "detailed": detailed})
                 if self.weight_before is None:
-                    self.weight_before = self._weights(model)
+                    self.weight_before = self._weight_samples(model)
 
             def on_optimizer_step(self, args, state, control, **kwargs):
                 self.step_events.append({"global_step": state.global_step, "optimizer_step_called": True})
@@ -101,7 +110,8 @@ class _GradientDiagnostics:
             def on_step_end(self, args, state, control, model=None, **kwargs):
                 if self.step_events:
                     self.step_events[-1]["global_step_after"] = state.global_step
-                    self.step_events[-1]["weight_sample_changed"] = self.weight_before != self._weights(model) if self.weight_before else False
+                    current = self._weight_samples(model)
+                    self.step_events[-1]["weight_sample_changed"] = self.weight_before != current if self.weight_before else False
 
         self.callback = Callback()
 
@@ -159,7 +169,7 @@ def smoke_test(config: TrainingConfig) -> dict[str, object]:
     torch.cuda.empty_cache()
     reloaded, reload_tokenizer, _, _ = load_quantized_model(config)
     reloaded.load_adapter(str(adapter_dir), adapter_name="default")
-    raw_outputs = _generate(reloaded, reload_tokenizer, smoke_validation, config.max_seq_length)
+    raw_outputs = _generate(reloaded, reload_tokenizer, smoke_validation, 192)
     validation_result = evaluate_validation_predictions(smoke_validation, raw_outputs)
     smoke_metrics = {
         "valid_output_rate": validation_result["valid_structured_output_rate"],
@@ -243,7 +253,7 @@ def full_train(config: TrainingConfig) -> dict[str, object]:
     class ValidationCallback(TrainerCallback):
         def on_epoch_end(self, args, state, control, model=None, **kwargs):
             model.config.use_cache = True
-            raw_outputs = _generate(model, tokenizer, validation, config.max_seq_length)
+            raw_outputs = _generate(model, tokenizer, validation, 192)
             result = evaluate_validation_predictions(validation, raw_outputs)
             epoch = int(round(state.epoch))
             adapter_dir = output_root / f"epoch_{epoch}_adapter"
@@ -283,7 +293,7 @@ def full_train(config: TrainingConfig) -> dict[str, object]:
     reloaded, reload_tokenizer, _, _ = load_quantized_model(config)
     reloaded.load_adapter(str(best_dir), adapter_name="default")
     final_result = evaluate_validation_predictions(validation,
-        _generate(reloaded, reload_tokenizer, validation, config.max_seq_length))
+        _generate(reloaded, reload_tokenizer, validation, 192))
     final_metrics = _metric_summary(final_result)
     if final_metrics["normalized_macro_field_accuracy"] != best["normalized_macro_field_accuracy"]:
         raise RuntimeError("reloaded best adapter did not reproduce selected validation result")
