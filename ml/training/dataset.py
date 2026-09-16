@@ -25,10 +25,10 @@ def format_training_example(words: list[str], raw_targets: dict[str, str | None]
 
 
 def load_train_validation(dataset_id: str = "mp-02/sroie", seed: int = 42) -> tuple[list[TrainingExample], list[TrainingExample]]:
-    dataset = load_sroie_dataset(dataset_id)
-    processed = process_split(dataset["train"], "source_train")
+    source_train = load_sroie_dataset(dataset_id, split="train")
+    processed = process_split(source_train, "source_train")
     train_processed, validation_processed = split_examples(processed, seed=seed)
-    rows = dataset["train"].remove_columns(["image"])
+    rows = source_train.remove_columns(["image"])
 
     def convert(items: list[Any], split: str) -> list[TrainingExample]:
         return [format_training_example(rows[item.index]["words"], item.raw_targets, f"{split}:{item.index}", item.fingerprint) for item in items]

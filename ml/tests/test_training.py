@@ -25,12 +25,7 @@ def test_config_validation():
 def test_training_loader_rejects_test_split(monkeypatch):
     import ml.training.dataset as dataset_module
 
-    accessed = []
-
-    class TrainOnly(dict):
-        def __getitem__(self, key):
-            accessed.append(key)
-            return super().__getitem__(key)
+    requested = []
 
     class EmptyDataset:
         column_names = []
@@ -39,9 +34,13 @@ def test_training_loader_rejects_test_split(monkeypatch):
 
         def remove_columns(self, columns): return self
 
-    monkeypatch.setattr(dataset_module, "load_sroie_dataset", lambda _: TrainOnly(train=EmptyDataset()))
+    def load_train_only(dataset_id, split=None):
+        requested.append((dataset_id, split))
+        return EmptyDataset()
+
+    monkeypatch.setattr(dataset_module, "load_sroie_dataset", load_train_only)
     dataset_module.load_train_validation()
-    assert set(accessed) == {"train"}
+    assert requested == [("mp-02/sroie", "train")]
 
 
 def test_assistant_only_loss_masks_prompt():

@@ -4,7 +4,7 @@ from collections import Counter
 from collections.abc import Sequence
 from typing import Any
 
-from datasets import DatasetDict, load_dataset
+from datasets import Dataset, DatasetDict, load_dataset
 
 from ml.data.constants import DATASET_ID, LABEL_TO_FIELD
 from ml.data.normalize import normalize_target
@@ -12,8 +12,11 @@ from ml.data.validate import validate_lengths
 from ml.extraction.schema import ExtractionExample, empty_targets
 
 
-def load_sroie_dataset(dataset_id: str = DATASET_ID) -> DatasetDict:
-    return load_dataset(dataset_id)
+def load_sroie_dataset(dataset_id: str = DATASET_ID, split: str | None = None) -> Dataset | DatasetDict:
+    """Load SROIE as a DatasetDict, or only the requested source split."""
+    if split is None:
+        return load_dataset(dataset_id)
+    return load_dataset(dataset_id, split=split)
 
 
 def label_name(dataset_split: Any, tag: Any) -> str | None:
