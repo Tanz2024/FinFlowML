@@ -105,3 +105,29 @@ def test_no_resume_ignores_valid_checkpoint(tmp_path):
         (checkpoint / filename).touch()
     assert checkpoint_for_resume(tmp_path, no_resume=True) is None
     assert checkpoint_for_resume(tmp_path, no_resume=False) == checkpoint
+
+
+def test_validation_history_survives_interruption_and_resume(tmp_path):
+    from ml.training.train import (
+        load_validation_history,
+        persist_validation_history,
+        upsert_validation_history,
+    )
+
+    history_path = tmp_path / "validation_history.json"
+
+    def epoch_entry(epoch):
+        return {"epoch": epoch, "normalized_macro_field_accuracy": epoch / 10}
+
+    history = []
+    upsert_validation_history(history, epoch_entry(1))
+    persist_validation_history(history_path, history)
+
+    restored = load_validation_history(history_path, resume=True)
+    for epoch in (1, 2, 3):
+        upsert_validation_history(restored, epoch_entry(epoch))
+        persist_validation_history(history_path, restored)
+
+    assert [entry["epoch"] for entry in load_validation_history(history_path, resume=True)] == [1, 2, 3]
+    assert len(load_validation_history(history_path, resume=True)) == 3
+    assert load_validation_history(history_path, resume=False) == []

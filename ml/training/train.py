@@ -3,6 +3,7 @@ import gc
 import json
 import math
 import os
+import tempfile
 import time
 from pathlib import Path
 
@@ -263,6 +264,33 @@ def checkpoint_for_resume(work_dir: Path, no_resume: bool) -> Path | None:
     return None if no_resume else discover_latest_checkpoint(work_dir)
 
 
+def load_validation_history(path: Path, resume: bool) -> list[dict[str, object]]:
+    if not resume or not path.is_file():
+        return []
+    history = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(history, list):
+        raise ValueError(f"validation history must be a list: {path}")
+    return sorted(history, key=lambda entry: int(entry["epoch"]))
+
+
+def persist_validation_history(path: Path, history: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ordered = sorted(history, key=lambda entry: int(entry["epoch"]))
+    with tempfile.NamedTemporaryFile("w", dir=path.parent, prefix=f".{path.name}.",
+                                    suffix=".tmp", encoding="utf-8", delete=False) as temporary:
+        json.dump(ordered, temporary, indent=2)
+        temporary.write("\n")
+        temporary_path = Path(temporary.name)
+    os.replace(temporary_path, path)
+
+
+def upsert_validation_history(history: list[dict[str, object]], entry: dict[str, object]) -> None:
+    epoch = int(entry["epoch"])
+    history[:] = [existing for existing in history if int(existing["epoch"]) != epoch]
+    history.append(entry)
+    history.sort(key=lambda existing: int(existing["epoch"]))
+
+
 def full_train(config: TrainingConfig) -> dict[str, object]:
     config.validate()
     started = time.perf_counter()
@@ -282,7 +310,8 @@ def full_train(config: TrainingConfig) -> dict[str, object]:
     output_root = stage4_output_root(config)
     output_root.mkdir(parents=True, exist_ok=True)
     diagnostics = _GradientDiagnostics(TrainerCallback)
-    validation_history = []
+    validation_history_path = output_root / "validation_history.json"
+    validation_history = load_validation_history(validation_history_path, not config.no_resume)
 
     class ValidationCallback(TrainerCallback):
         def on_epoch_end(self, args, state, control, model=None, **kwargs):
@@ -292,7 +321,8 @@ def full_train(config: TrainingConfig) -> dict[str, object]:
             epoch = int(round(state.epoch))
             adapter_dir = output_root / f"epoch_{epoch}_adapter"
             model.save_pretrained(adapter_dir)
-            validation_history.append({"epoch": epoch, **_metric_summary(result)})
+            upsert_validation_history(validation_history, {"epoch": epoch, **_metric_summary(result)})
+            persist_validation_history(validation_history_path, validation_history)
             model.config.use_cache = False
             return control
 
@@ -311,8 +341,10 @@ def full_train(config: TrainingConfig) -> dict[str, object]:
         result = trainer.train(resume_from_checkpoint=str(checkpoint))
     else:
         result = trainer.train()
-    if len(validation_history) != config.epochs:
-        raise RuntimeError("validation did not run at every training epoch")
+    expected_epochs = list(range(1, config.epochs + 1))
+    actual_epochs = [int(entry["epoch"]) for entry in validation_history]
+    if actual_epochs != expected_epochs:
+        raise RuntimeError("validation history does not contain each training epoch exactly once")
     if not all(math.isfinite(float(entry["loss"])) for entry in trainer.state.log_history if "loss" in entry):
         raise RuntimeError("training loss became non-finite")
     amp_classification = classify_amp_records(diagnostics.callback.records)
@@ -357,7 +389,7 @@ def full_train(config: TrainingConfig) -> dict[str, object]:
         "effective_parameter_updates": sum(event.get("weight_sample_changed", False) for event in diagnostics.callback.step_events)},
         "training_loss": result.training_loss, "runtime_seconds": time.perf_counter() - started}
     (output_root / "training_history.json").write_text(json.dumps(training_history, indent=2) + "\n", encoding="utf-8")
-    (output_root / "validation_history.json").write_text(json.dumps(validation_history, indent=2) + "\n", encoding="utf-8")
+    persist_validation_history(validation_history_path, validation_history)
     (output_root / "training_metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     del reloaded
     gc.collect()
