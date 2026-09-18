@@ -73,3 +73,35 @@ def test_full_training_selection_and_amp_classification():
     records = [{"tensors_with_nan": 1, "tensors_with_inf": 0},
                {"tensors_with_nan": 0, "tensors_with_inf": 0}]
     assert classify_amp_records(records) == {"initial_overflow": True, "persistent_after_recovery": False}
+
+
+def test_checkpoint_discovery_ignores_epoch_adapters_and_selects_latest(tmp_path):
+    from ml.training.train import discover_latest_checkpoint
+
+    (tmp_path / "epoch_2_adapter").mkdir()
+    for number in (5, 10):
+        checkpoint = tmp_path / f"checkpoint-{number}"
+        checkpoint.mkdir()
+        for filename in ("trainer_state.json", "adapter_model.safetensors", "optimizer.pt", "scheduler.pt"):
+            (checkpoint / filename).touch()
+    assert discover_latest_checkpoint(tmp_path) == tmp_path / "checkpoint-10"
+
+
+def test_checkpoint_discovery_rejects_incomplete_checkpoint(tmp_path):
+    from ml.training.train import discover_latest_checkpoint
+
+    checkpoint = tmp_path / "checkpoint-10"
+    checkpoint.mkdir()
+    (checkpoint / "trainer_state.json").touch()
+    assert discover_latest_checkpoint(tmp_path) is None
+
+
+def test_no_resume_ignores_valid_checkpoint(tmp_path):
+    from ml.training.train import checkpoint_for_resume
+
+    checkpoint = tmp_path / "checkpoint-10"
+    checkpoint.mkdir()
+    for filename in ("trainer_state.json", "adapter_model.safetensors", "optimizer.pt", "scheduler.pt"):
+        (checkpoint / filename).touch()
+    assert checkpoint_for_resume(tmp_path, no_resume=True) is None
+    assert checkpoint_for_resume(tmp_path, no_resume=False) == checkpoint

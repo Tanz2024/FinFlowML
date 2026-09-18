@@ -22,6 +22,7 @@ class TrainingConfig:
     lora_dropout: float = 0.05
     target_modules: tuple[str, ...] = field(default_factory=lambda: ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"))
     output_dir: str = "results/stage4"
+    no_resume: bool = False
     smoke_train_examples: int = 12
     smoke_steps: int = 4
 

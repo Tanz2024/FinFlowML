@@ -2,6 +2,7 @@ import argparse
 import gc
 import json
 import math
+import os
 import time
 from pathlib import Path
 
@@ -229,6 +230,39 @@ def classify_amp_records(records):
             "persistent_after_recovery": sum(record["tensors_with_nan"] or record["tensors_with_inf"] for record in later) >= 2}
 
 
+def stage4_output_root(config: TrainingConfig) -> Path:
+    """Return the persistent Stage 4 root, allowing Colab/Drive override."""
+    configured = os.environ.get("FINFLOW_TRAINING_DIR")
+    return Path(configured) if configured else Path(config.output_dir).parent / "training"
+
+
+def _checkpoint_has_any(path: Path, names: tuple[str, ...]) -> bool:
+    return any((path / name).is_file() for name in names)
+
+
+def discover_latest_checkpoint(work_dir: Path) -> Path | None:
+    """Find the newest complete Trainer checkpoint, excluding epoch adapter exports."""
+    candidates = []
+    for path in work_dir.glob("checkpoint-*"):
+        if not path.is_dir() or not path.name.removeprefix("checkpoint-").isdigit():
+            continue
+        # These are the artifacts Trainer needs for continuation. In particular,
+        # adapter exports elsewhere in the training root are intentionally ignored.
+        complete = (
+            (path / "trainer_state.json").is_file()
+            and _checkpoint_has_any(path, ("adapter_model.safetensors", "adapter_model.bin"))
+            and _checkpoint_has_any(path, ("optimizer.pt", "optimizer.bin"))
+            and (path / "scheduler.pt").is_file()
+        )
+        if complete:
+            candidates.append(path)
+    return max(candidates, key=lambda path: int(path.name.removeprefix("checkpoint-")), default=None)
+
+
+def checkpoint_for_resume(work_dir: Path, no_resume: bool) -> Path | None:
+    return None if no_resume else discover_latest_checkpoint(work_dir)
+
+
 def full_train(config: TrainingConfig) -> dict[str, object]:
     config.validate()
     started = time.perf_counter()
@@ -245,7 +279,7 @@ def full_train(config: TrainingConfig) -> dict[str, object]:
     from transformers import Trainer, TrainerCallback, TrainingArguments
     encoded_train = Dataset.from_list([assistant_only_tokens(example, tokenizer) for example in train])
     _validate_smoke_example(encoded_train[0])
-    output_root = Path(config.output_dir).parent / "training"
+    output_root = stage4_output_root(config)
     output_root.mkdir(parents=True, exist_ok=True)
     diagnostics = _GradientDiagnostics(TrainerCallback)
     validation_history = []
@@ -265,12 +299,18 @@ def full_train(config: TrainingConfig) -> dict[str, object]:
     args = TrainingArguments(output_dir=str(output_root / "work"), num_train_epochs=config.epochs,
         per_device_train_batch_size=config.train_batch_size, gradient_accumulation_steps=config.gradient_accumulation_steps,
         learning_rate=config.learning_rate, warmup_ratio=config.warmup_ratio, lr_scheduler_type=config.scheduler,
-        logging_steps=1, save_strategy="no", report_to=[], fp16=hardware["fp16"], bf16=hardware["bf16"],
+        logging_steps=1, save_strategy="steps", save_steps=5, save_total_limit=2, report_to=[],
+        fp16=hardware["fp16"], bf16=hardware["bf16"],
         optim=config.optimizer, gradient_checkpointing=config.gradient_checkpointing, seed=config.seed)
     trainer = Trainer(model=model, args=args, train_dataset=encoded_train,
                       data_collator=_Collator(tokenizer, config.max_seq_length),
                       callbacks=[diagnostics.callback, ValidationCallback()])
-    result = trainer.train()
+    checkpoint = checkpoint_for_resume(output_root / "work", config.no_resume)
+    if checkpoint is not None:
+        print(f"Resuming Stage 4 from checkpoint: {checkpoint}")
+        result = trainer.train(resume_from_checkpoint=str(checkpoint))
+    else:
+        result = trainer.train()
     if len(validation_history) != config.epochs:
         raise RuntimeError("validation did not run at every training epoch")
     if not all(math.isfinite(float(entry["loss"])) for entry in trainer.state.log_history if "loss" in entry):
@@ -329,10 +369,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--train", action="store_true")
+    parser.add_argument("--no-resume", action="store_true")
     args = parser.parse_args()
     if args.smoke == args.train:
         raise SystemExit("choose exactly one of --smoke or --train")
-    print(json.dumps(smoke_test(TrainingConfig()) if args.smoke else full_train(TrainingConfig()), indent=2))
+    config = TrainingConfig(no_resume=args.no_resume)
+    print(json.dumps(smoke_test(config) if args.smoke else full_train(config), indent=2))
 
 
 if __name__ == "__main__":
