@@ -120,11 +120,25 @@ class _GradientDiagnostics:
 
 def _generate(model, tokenizer, examples, max_length):
     outputs = []
-    for example in examples:
-        prompt = tokenizer.apply_chat_template(example.messages[:1], tokenize=False, add_generation_prompt=True)
-        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-        generated = model.generate(**inputs, max_new_tokens=max_length, do_sample=False)
-        outputs.append(tokenizer.decode(generated[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True).strip())
+    was_training = model.training
+    previous_use_cache = model.config.use_cache
+    import torch
+
+    model.eval()
+    model.config.use_cache = True
+    try:
+        with torch.inference_mode():
+            for index, example in enumerate(examples, start=1):
+                prompt = tokenizer.apply_chat_template(example.messages[:1], tokenize=False, add_generation_prompt=True)
+                inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+                generated = model.generate(**inputs, max_new_tokens=max_length, do_sample=False)
+                outputs.append(tokenizer.decode(generated[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True).strip())
+                if index == 1 or index % 5 == 0 or index == len(examples):
+                    print(f"Validation generation: {index}/{len(examples)}")
+    finally:
+        model.config.use_cache = previous_use_cache
+        if was_training:
+            model.train()
     return outputs
 
 

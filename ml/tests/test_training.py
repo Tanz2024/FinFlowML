@@ -64,6 +64,45 @@ def test_smoke_example_validation_rejects_empty_assistant_labels():
         _validate_smoke_example({"input_ids": [1], "attention_mask": [1], "labels": [-100]})
 
 
+def test_generation_temporarily_uses_eval_and_restores_model_state():
+    import torch
+
+    from ml.training.train import _generate
+
+    class Inputs(dict):
+        def to(self, device):
+            return self
+
+    class Tokenizer:
+        def apply_chat_template(self, messages, **kwargs):
+            return "prompt"
+
+        def __call__(self, prompt, **kwargs):
+            return Inputs(input_ids=torch.tensor([[1, 2]]))
+
+        def decode(self, tokens, **kwargs):
+            return "{}"
+
+    class Config:
+        use_cache = False
+
+    class Model(torch.nn.Module):
+        config = Config()
+        device = torch.device("cpu")
+
+        def generate(self, **kwargs):
+            assert self.training is False
+            assert self.config.use_cache is True
+            return torch.tensor([[1, 2, 3]])
+
+    model = Model()
+    model.train()
+    outputs = _generate(model, Tokenizer(), [type("Example", (), {"messages": []})()], 192)
+    assert outputs == ["{}"]
+    assert model.training is True
+    assert model.config.use_cache is False
+
+
 def test_full_training_selection_and_amp_classification():
     from ml.training.train import classify_amp_records, select_best_validation
 
