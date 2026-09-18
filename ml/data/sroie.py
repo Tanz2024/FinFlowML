@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from datasets import Dataset, DatasetDict, load_dataset
+from huggingface_hub import hf_hub_download, list_repo_files
 
 from ml.data.constants import DATASET_ID, LABEL_TO_FIELD
 from ml.data.normalize import normalize_target
@@ -16,7 +17,16 @@ def load_sroie_dataset(dataset_id: str = DATASET_ID, split: str | None = None) -
     """Load SROIE as a DatasetDict, or only the requested source split."""
     if split is None:
         return load_dataset(dataset_id)
-    return load_dataset(dataset_id, split=split)
+    if split != "train":
+        return load_dataset(dataset_id, split=split)
+    train_shards = sorted(
+        filename for filename in list_repo_files(dataset_id, repo_type="dataset")
+        if filename.startswith("data/train-") and filename.endswith(".parquet")
+    )
+    if not train_shards:
+        raise FileNotFoundError(f"no train parquet shards found in dataset repository: {dataset_id}")
+    train_files = [hf_hub_download(dataset_id, filename, repo_type="dataset") for filename in train_shards]
+    return load_dataset("parquet", data_files=train_files, split="train")
 
 
 def label_name(dataset_split: Any, tag: Any) -> str | None:
