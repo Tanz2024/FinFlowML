@@ -74,7 +74,9 @@ def load_finflow_model(
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     tokenizer_kwargs = {"revision": revision} if revision is not None else {}
+    print(f"Loading tokenizer from {base_model}")
     tokenizer = AutoTokenizer.from_pretrained(str(base_model), **tokenizer_kwargs)
+    print("Tokenizer loaded")
     load_kwargs = dict(model_kwargs)
     if quantization_config is not None:
         load_kwargs["quantization_config"] = quantization_config
@@ -82,10 +84,15 @@ def load_finflow_model(
         load_kwargs["device_map"] = device_map
     if revision is not None:
         load_kwargs["revision"] = revision
+    print(f"Loading base model {base_model}")
     model = AutoModelForCausalLM.from_pretrained(str(base_model), **load_kwargs)
+    print("Base model loaded")
 
     if adapter is not None:
         from peft import PeftModel
 
+        print(f"Loading LoRA adapter {adapter}")
         model = PeftModel.from_pretrained(model, str(adapter))
+        print("LoRA adapter loaded")
+    print("FinFlowML model ready")
     return LoadedModel(model=model, tokenizer=tokenizer)
