@@ -3,6 +3,9 @@
 import os
 from typing import Any
 
+import torch
+from transformers import BitsAndBytesConfig
+
 from ml.extraction.parser import parse_prediction
 from ml.extraction.prompt import build_prompt
 from ml.modeling.loader import LoadedModel, load_finflow_model
@@ -27,7 +30,18 @@ def predict(
 ) -> tuple[str, dict[str, str | None] | None, str | None]:
     """Generate and parse a structured prediction from receipt OCR text."""
 
-    loaded = load_inference_model(base_model, adapter_path)
+    quantization_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_compute_dtype=torch.float16,
+    )
+    loaded = load_inference_model(
+        base_model,
+        adapter_path,
+        quantization_config=quantization_config,
+        device_map="auto",
+    )
     prompt = build_prompt(ocr_text)
     messages = [{"role": "user", "content": prompt}]
     rendered_prompt = loaded.tokenizer.apply_chat_template(
