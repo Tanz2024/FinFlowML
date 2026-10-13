@@ -63,3 +63,13 @@ uvicorn backend.app.main:app --reload
 Open <http://127.0.0.1:8000/demo>, choose a receipt image, and click **Extract
 Receipt Data**. Set `ADAPTER_PATH` (or `FINFLOW_TRAINING_DIR`) if the adapter is
 stored somewhere other than the default Stage 4 path.
+
+## Stage 4 completion
+
+Stage 4 QLoRA training and the 347-document Colab comparison are complete. The
+verified adapter reached 88.83% macro field accuracy and 67.15% all-fields-correct
+on the saved official test evaluation, versus 71.54% and 23.92% for the base
+model. See [docs/stage4-results.md](docs/stage4-results.md) for provenance,
+integrity qualifications, environment notes, and the model-free artifact
+verifier. Raw predictions, adapters, checkpoints, and model files are not
+committed.

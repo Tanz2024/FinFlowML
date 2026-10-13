@@ -19,7 +19,7 @@ from statistics import mean, median
 
 from ml.data.constants import DATASET_ID, DEFAULT_SEED, TARGET_FIELDS
 from ml.data.split import split_examples
-from ml.data.sroie import load_sroie_dataset, process_split
+from ml.data.sroie import load_sroie_dataset, process_split, words_to_text
 from ml.evaluation.metrics import metrics
 from ml.extraction.parser import parse_prediction
 from ml.extraction.prompt import build_prompt
@@ -65,6 +65,9 @@ def _hardware() -> dict[str, object]:
 
 def _near_duplicate_report(splits: dict[str, list]) -> dict[str, object]:
     """Report exact fingerprint overlap and conservative text near-overlap."""
+    def target_text(item) -> str:
+        return " ".join(str(value) for value in item.raw_targets.values() if value is not None).casefold()
+
     fingerprints = {name: {item.fingerprint for item in values} for name, values in splits.items()}
     exact = {}
     near = {}
@@ -73,9 +76,9 @@ def _near_duplicate_report(splits: dict[str, list]) -> dict[str, object]:
         exact[f"{left}_vs_{right}"] = overlap
         pairs = []
         for left_item in splits[left]:
-            left_text = " ".join(left_item.raw_targets.values()).casefold()
+            left_text = target_text(left_item)
             for right_item in splits[right]:
-                right_text = " ".join(right_item.raw_targets.values()).casefold()
+                right_text = target_text(right_item)
                 if left_text and right_text and SequenceMatcher(None, left_text, right_text).ratio() >= 0.98:
                     pairs.append(
                         {
@@ -172,7 +175,7 @@ def _evaluate_model(
     if [item["example_id"] for item in records] != expected_ids:
         raise ValueError(f"checkpoint document identities do not match current test split: {checkpoint_path}")
     for example in examples[len(records) :]:
-        ocr_text = " ".join(rows[example.index]["words"])
+        ocr_text = words_to_text(rows[example.index]["words"])
         rendered = loaded.tokenizer.apply_chat_template(
             [{"role": "user", "content": build_prompt(ocr_text)}],
             add_generation_prompt=True,

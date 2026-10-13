@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ml.data.constants import DATASET_ID, DEFAULT_SEED, TARGET_FIELDS
-from ml.data.sroie import load_sroie_dataset, process_split
+from ml.data.sroie import load_sroie_dataset, process_split, words_to_text
 from ml.evaluation.metrics import metrics
 from ml.extraction.baseline import MODEL_ID, BaselineModel
 from ml.extraction.parser import parse_prediction
@@ -35,7 +35,7 @@ def run_benchmark(limit: int | None = None, output_dir: Path = Path("results/bas
     records = []
     for example in examples:
         row = dataset["test"].remove_columns(["image"])[example.index]
-        prompt = build_prompt(" ".join(row["words"]))
+        prompt = build_prompt(words_to_text(row["words"]))
         raw_response, duration = model.generate(prompt)
         prediction, error = parse_prediction(raw_response)
         scoring_prediction = prediction or {field: None for field in TARGET_FIELDS}

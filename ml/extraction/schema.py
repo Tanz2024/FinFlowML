@@ -15,6 +15,11 @@ class ExtractionExample:
     validation_issues: tuple[str, ...]
     image_reference: str
 
+    @property
+    def example_id(self) -> str:
+        """Stable identifier shared by training and evaluation reports."""
+        return self.image_reference
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "split": self.split,

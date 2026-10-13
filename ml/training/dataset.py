@@ -4,7 +4,7 @@ from statistics import median
 from typing import Any
 
 from ml.data.split import split_examples
-from ml.data.sroie import load_sroie_dataset, process_split
+from ml.data.sroie import load_sroie_dataset, process_split, words_to_text
 from ml.extraction.prompt import build_prompt
 
 
@@ -21,7 +21,7 @@ def target_json(raw_targets: dict[str, str | None]) -> str:
 
 
 def format_training_example(words: list[str], raw_targets: dict[str, str | None], example_id: str, fingerprint: str) -> TrainingExample:
-    return TrainingExample(example_id, fingerprint, [{"role": "user", "content": build_prompt(" ".join(words))}, {"role": "assistant", "content": target_json(raw_targets)}], raw_targets)
+    return TrainingExample(example_id, fingerprint, [{"role": "user", "content": build_prompt(words_to_text(words))}, {"role": "assistant", "content": target_json(raw_targets)}], raw_targets)
 
 
 def load_train_validation(dataset_id: str = "mp-02/sroie", seed: int = 42) -> tuple[list[TrainingExample], list[TrainingExample]]:

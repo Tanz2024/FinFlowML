@@ -13,6 +13,11 @@ from ml.data.validate import validate_lengths
 from ml.extraction.schema import ExtractionExample, empty_targets
 
 
+def words_to_text(words: Sequence[Any]) -> str:
+    """Convert OCR words safely when dataset rows contain null tokens."""
+    return " ".join(str(word).strip() for word in words if word is not None).strip()
+
+
 def load_sroie_dataset(
     dataset_id: str = DATASET_ID,
     split: str | None = None,
