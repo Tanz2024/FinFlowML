@@ -10,19 +10,28 @@ from backend.app.main import app
 
 
 @pytest.fixture()
-def client():
+def client_db():
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine)
+    db = factory()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@pytest.fixture()
+def client(client_db):
+    db = client_db
 
     def override():
-        db = factory()
         try:
             yield db
         finally:
-            db.close()
+            pass
 
     app.dependency_overrides[get_db] = override
     with TestClient(app) as test_client:
