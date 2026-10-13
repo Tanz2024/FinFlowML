@@ -1,8 +1,12 @@
 from uuid import UUID
 
+import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from backend.app.models.expense import Expense
+from backend.app.models.receipt import Receipt
+from backend.app.services import receipt_review
 
 
 def create_review_receipt(client):
@@ -57,3 +61,18 @@ def test_rejection_is_terminal_and_does_not_create_expense(client, client_db):
     assert rejected.status_code == 200
     assert client.post(f"/receipts/{receipt['id']}/approve").status_code == 409
     assert client_db.scalar(select(Expense).where(Expense.receipt_id == UUID(receipt["id"]))) is None
+
+
+def test_approval_transaction_failure_rolls_back(client, client_db, monkeypatch):
+    receipt = create_review_receipt(client)
+    item = client_db.get(Receipt, UUID(receipt["id"]))
+
+    def fail(*args, **kwargs):
+        raise SQLAlchemyError("simulated database failure")
+
+    monkeypatch.setattr(receipt_review, "categorize_merchant", fail)
+    with pytest.raises(SQLAlchemyError):
+        receipt_review.approve_receipt(client_db, item)
+    client_db.rollback()
+    assert client_db.get(Receipt, item.id).status == "needs_review"
+    assert client_db.scalar(select(Expense).where(Expense.receipt_id == item.id)) is None
