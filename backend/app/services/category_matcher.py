@@ -41,17 +41,17 @@ def match_category_name(merchant_name: str | None) -> str:
     return UNCATEGORIZED
 
 
-def get_or_create_category(db: Session, name: str) -> ExpenseCategory:
+def get_or_create_category(db: Session, name: str, organization_id=None) -> ExpenseCategory:
     """Fetch a category by name, creating it (as a system category) if absent."""
-    category = db.scalar(select(ExpenseCategory).where(ExpenseCategory.name == name))
+    category = db.scalar(select(ExpenseCategory).where(ExpenseCategory.name == name, ExpenseCategory.organization_id == organization_id))
     if category is not None:
         return category
-    category = ExpenseCategory(name=name, is_system=True)
+    category = ExpenseCategory(name=name, organization_id=organization_id, is_system=True)
     db.add(category)
     db.flush()
     return category
 
 
-def categorize_merchant(db: Session, merchant_name: str | None) -> ExpenseCategory:
+def categorize_merchant(db: Session, merchant_name: str | None, organization_id=None) -> ExpenseCategory:
     """Resolve (and persist if needed) the expense category for a merchant."""
-    return get_or_create_category(db, match_category_name(merchant_name))
+    return get_or_create_category(db, match_category_name(merchant_name), organization_id)

@@ -75,9 +75,9 @@ def store_extraction(db: Session, receipt: Receipt) -> Receipt:
     return receipt
 
 
-def approve_receipt(db: Session, receipt: Receipt) -> Expense:
+def approve_receipt(db: Session, receipt: Receipt, actor_id=None, organization_id=None) -> Expense:
     if receipt.status == ReceiptStatus.APPROVED:
-        existing = db.scalar(select(Expense).where(Expense.receipt_id == receipt.id))
+        existing = db.scalar(select(Expense).where(Expense.receipt_id == receipt.id, Expense.organization_id == organization_id))
         if existing is None:
             raise HTTPException(status_code=409, detail="approved receipt has no expense")
         return existing
@@ -90,10 +90,11 @@ def approve_receipt(db: Session, receipt: Receipt) -> Expense:
         db.commit()
         raise HTTPException(status_code=422, detail={"validation_errors": errors})
     try:
-        existing = db.scalar(select(Expense).where(Expense.receipt_id == receipt.id))
+        existing = db.scalar(select(Expense).where(Expense.receipt_id == receipt.id, Expense.organization_id == organization_id))
         if existing is None:
-            category = categorize_merchant(db, data["company"])
+            category = categorize_merchant(db, data["company"], organization_id)
             existing = Expense(
+                organization_id=organization_id,
                 receipt_id=receipt.id,
                 category_id=category.id,
                 merchant_name=data["company"],
@@ -103,6 +104,8 @@ def approve_receipt(db: Session, receipt: Receipt) -> Expense:
             )
             db.add(existing)
         receipt.status = ReceiptStatus.APPROVED.value
+        receipt.approved_by_user_id = actor_id
+        receipt.last_action_by_user_id = actor_id
         receipt.validation_errors = []
         db.commit()
         db.refresh(existing)
@@ -112,10 +115,12 @@ def approve_receipt(db: Session, receipt: Receipt) -> Expense:
         raise
 
 
-def reject_receipt(db: Session, receipt: Receipt) -> Receipt:
+def reject_receipt(db: Session, receipt: Receipt, actor_id=None) -> Receipt:
     if receipt.status == ReceiptStatus.REJECTED.value:
         return receipt
     transition(receipt, ReceiptStatus.REJECTED)
+    receipt.rejected_by_user_id = actor_id
+    receipt.last_action_by_user_id = actor_id
     db.commit()
     db.refresh(receipt)
     return receipt

@@ -38,14 +38,14 @@ def test_receipt_and_expense_apis_and_summary(client, client_db):
             "currency": "USD",
         },
     )
-    assert expense.status_code == 201
+    assert expense.status_code == 409
 
     summary = client.get("/expenses/summary")
     assert summary.status_code == 200
     body = summary.json()
-    # Receipt submission is review-first; only the explicit manual expense exists.
-    assert body["total_spending"] == "25.00"
-    assert body["spending_by_category"]["Supplies"] == "25.00"
+    # Unapproved receipt creation cannot enter the expense ledger.
+    assert body["total_spending"] == "0"
+    assert body["spending_by_category"] == {}
     assert "Uncategorized" not in body["spending_by_category"]
 
     categories = client.get("/expenses/categories")

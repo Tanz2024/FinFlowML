@@ -9,7 +9,7 @@ __pycache__/
 **/.huggingface/
 huggingface/
 hf_cache/
-models/
+/models/
 checkpoints/
 *.safetensors
 *.ckpt

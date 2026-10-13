@@ -5,14 +5,18 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from backend.app.core.auth import CurrentUser, create_access_token, require_permission
+from backend.app.core.config import settings
 from backend.app.database.session import get_db
 from backend.app.models.customer import Customer
 from backend.app.models.expense import Expense
 from backend.app.models.expense_category import ExpenseCategory
 from backend.app.models.invoice import Invoice
+from backend.app.models.organization import Membership, User
 from backend.app.models.payment import Payment
 from backend.app.models.receipt import Receipt
 from backend.app.schemas.accounting import AccountingSummaryRead, MonthlyReportEntryRead
+from backend.app.schemas.auth import LoginRequest, TokenResponse
 from backend.app.schemas.customer import CustomerCreate, CustomerRead
 from backend.app.schemas.expense import (
     ExpenseCategoryRead,
@@ -40,9 +44,36 @@ from backend.app.services.receipt_review import (
 router = APIRouter()
 
 
+@router.post("/auth/login", response_model=TokenResponse)
+def login(payload: LoginRequest, db: Session = Depends(get_db)):
+    email = payload.email.strip().lower()
+    user = db.scalar(select(User).where(User.email == email))
+    if user is None:
+        raise HTTPException(status_code=401, detail="invalid credentials")
+    from backend.app.core.auth import verify_password
+    if not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="invalid credentials")
+    membership = db.scalar(select(Membership).where(Membership.user_id == user.id))
+    if not user.is_active or membership is None:
+        raise HTTPException(status_code=401, detail="invalid credentials")
+    return TokenResponse(
+        access_token=create_access_token(user.id, membership.organization_id, membership.role),
+        expires_in=settings.access_token_minutes * 60,
+        organization_id=membership.organization_id,
+        role=membership.role,
+    )
+
+
+def _owned(db: Session, model, record_id: UUID, actor: CurrentUser):
+    item = db.scalar(select(model).where(model.id == record_id, model.organization_id == actor.organization_id))
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"{model.__name__} not found")
+    return item
+
+
 @router.post("/receipts", response_model=ReceiptRead, status_code=status.HTTP_201_CREATED)
-def create_receipt(payload: ReceiptCreate, db: Session = Depends(get_db)):
-    item = Receipt(**payload.model_dump())
+def create_receipt(payload: ReceiptCreate, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("review"))):
+    item = Receipt(organization_id=actor.organization_id, **payload.model_dump())
     item.status = "pending"
     db.add(item)
     db.commit()
@@ -51,38 +82,34 @@ def create_receipt(payload: ReceiptCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/receipts/pending", response_model=list[ReceiptRead])
-def list_pending_receipts(db: Session = Depends(get_db)):
-    return db.scalars(select(Receipt).where(Receipt.status.in_(["pending", "needs_review"])).order_by(Receipt.created_at)).all()
+def list_pending_receipts(db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("read"))):
+    return db.scalars(select(Receipt).where(Receipt.organization_id == actor.organization_id, Receipt.status.in_(["pending", "needs_review"])).order_by(Receipt.created_at)).all()
 
 
 @router.get("/receipts/{receipt_id}", response_model=ReceiptRead)
-def get_receipt(receipt_id: UUID, db: Session = Depends(get_db)):
-    item = db.get(Receipt, receipt_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail="Receipt not found")
+def get_receipt(receipt_id: UUID, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("read"))):
+    item = _owned(db, Receipt, receipt_id, actor)
     return item
 
 
 @router.get("/receipts/{receipt_id}/status", response_model=ReceiptStatusRead)
-def receipt_status(receipt_id: UUID, db: Session = Depends(get_db)):
-    item = db.get(Receipt, receipt_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail="Receipt not found")
-    expense = db.scalar(select(Expense).where(Expense.receipt_id == item.id))
+def receipt_status(receipt_id: UUID, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("read"))):
+    item = _owned(db, Receipt, receipt_id, actor)
+    expense = db.scalar(select(Expense).where(Expense.receipt_id == item.id, Expense.organization_id == actor.organization_id))
     return ReceiptStatusRead(id=item.id, status=item.status, validation_errors=item.validation_errors, effective_data=effective_data(item), expense_id=expense.id if expense else None)
 
 
 @router.patch("/receipts/{receipt_id}/corrections", response_model=ReceiptRead)
-def correct_receipt(receipt_id: UUID, payload: ReceiptCorrection, db: Session = Depends(get_db)):
-    item = db.get(Receipt, receipt_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail="Receipt not found")
+def correct_receipt(receipt_id: UUID, payload: ReceiptCorrection, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("review"))):
+    item = _owned(db, Receipt, receipt_id, actor)
     if item.status != "needs_review":
         raise HTTPException(status_code=409, detail="only receipts needing review can be corrected")
     unknown = set(payload.corrections) - {"company", "receipt_date", "address", "total", "currency"}
     if unknown:
         raise HTTPException(status_code=422, detail=f"unsupported correction fields: {sorted(unknown)}")
     item.corrected_data = {**(item.corrected_data or {}), **payload.corrections}
+    item.corrected_by_user_id = actor.user.id
+    item.last_action_by_user_id = actor.user.id
     item.validation_errors = validate_receipt_data(effective_data(item))
     db.commit()
     db.refresh(item)
@@ -90,28 +117,23 @@ def correct_receipt(receipt_id: UUID, payload: ReceiptCorrection, db: Session = 
 
 
 @router.post("/receipts/{receipt_id}/approve", response_model=ExpenseRead)
-def approve_receipt_endpoint(receipt_id: UUID, db: Session = Depends(get_db)):
-    item = db.get(Receipt, receipt_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail="Receipt not found")
-    return approve_receipt(db, item)
+def approve_receipt_endpoint(receipt_id: UUID, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("approve"))):
+    return approve_receipt(db, _owned(db, Receipt, receipt_id, actor), actor.user.id, actor.organization_id)
 
 
 @router.post("/receipts/{receipt_id}/reject", response_model=ReceiptRead)
-def reject_receipt_endpoint(receipt_id: UUID, db: Session = Depends(get_db)):
-    item = db.get(Receipt, receipt_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail="Receipt not found")
-    return reject_receipt(db, item)
+def reject_receipt_endpoint(receipt_id: UUID, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("approve"))):
+    return reject_receipt(db, _owned(db, Receipt, receipt_id, actor), actor.user.id)
 
 
 @router.post("/expenses", response_model=ExpenseRead, status_code=status.HTTP_201_CREATED)
-def create_expense(payload: ExpenseCreate, db: Session = Depends(get_db)):
-    if db.get(Receipt, payload.receipt_id) is None:
-        raise HTTPException(status_code=404, detail="Receipt not found")
-    if payload.category_id is not None and db.get(ExpenseCategory, payload.category_id) is None:
+def create_expense(payload: ExpenseCreate, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("manual_expense"))):
+    receipt = _owned(db, Receipt, payload.receipt_id, actor)
+    if receipt.status != "approved":
+        raise HTTPException(status_code=409, detail="receipt must be approved before creating an expense")
+    if payload.category_id is not None and db.scalar(select(ExpenseCategory).where(ExpenseCategory.id == payload.category_id, ExpenseCategory.organization_id == actor.organization_id)) is None:
         raise HTTPException(status_code=404, detail="Expense category not found")
-    item = Expense(**payload.model_dump())
+    item = Expense(organization_id=actor.organization_id, **payload.model_dump())
     db.add(item)
     db.commit()
     db.refresh(item)
@@ -119,14 +141,14 @@ def create_expense(payload: ExpenseCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/expenses/categories", response_model=list[ExpenseCategoryRead])
-def list_expense_categories(db: Session = Depends(get_db)):
-    return db.scalars(select(ExpenseCategory).order_by(ExpenseCategory.name)).all()
+def list_expense_categories(db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("read"))):
+    return db.scalars(select(ExpenseCategory).where(ExpenseCategory.organization_id == actor.organization_id).order_by(ExpenseCategory.name)).all()
 
 
 @router.get("/expenses/summary", response_model=ExpenseSummary)
-def expense_summary(db: Session = Depends(get_db)):
-    expenses = db.scalars(select(Expense).order_by(Expense.expense_date, Expense.created_at)).all()
-    categories = {category.id: category.name for category in db.scalars(select(ExpenseCategory)).all()}
+def expense_summary(db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("read"))):
+    expenses = db.scalars(select(Expense).where(Expense.organization_id == actor.organization_id).order_by(Expense.expense_date, Expense.created_at)).all()
+    categories = {category.id: category.name for category in db.scalars(select(ExpenseCategory).where(ExpenseCategory.organization_id == actor.organization_id)).all()}
     total = sum((expense.amount for expense in expenses), start=0)
     by_category: defaultdict[str, object] = defaultdict(lambda: 0)
     monthly: defaultdict[str, object] = defaultdict(lambda: 0)
@@ -147,13 +169,13 @@ def health() -> dict[str, str]:
 
 
 @router.get("/customers", response_model=list[CustomerRead])
-def list_customers(db: Session = Depends(get_db)):
-    return db.scalars(select(Customer)).all()
+def list_customers(db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("read"))):
+    return db.scalars(select(Customer).where(Customer.organization_id == actor.organization_id)).all()
 
 
 @router.post("/customers", response_model=CustomerRead, status_code=status.HTTP_201_CREATED)
-def create_customer(payload: CustomerCreate, db: Session = Depends(get_db)):
-    item = Customer(**payload.model_dump())
+def create_customer(payload: CustomerCreate, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("accounting"))):
+    item = Customer(organization_id=actor.organization_id, **payload.model_dump())
     db.add(item)
     db.commit()
     db.refresh(item)
@@ -161,48 +183,48 @@ def create_customer(payload: CustomerCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/invoices", response_model=list[InvoiceRead])
-def list_invoices(db: Session = Depends(get_db)):
-    return db.scalars(select(Invoice)).all()
+def list_invoices(db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("read"))):
+    return db.scalars(select(Invoice).where(Invoice.organization_id == actor.organization_id)).all()
 
 
 @router.get("/invoices/{invoice_id}", response_model=InvoiceRead)
-def get_invoice(invoice_id: UUID, db: Session = Depends(get_db)):
-    item = db.get(Invoice, invoice_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail="Invoice not found")
+def get_invoice(invoice_id: UUID, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("read"))):
+    item = _owned(db, Invoice, invoice_id, actor)
     return item
 
 
 @router.post("/invoices", response_model=InvoiceRead, status_code=status.HTTP_201_CREATED)
-def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)):
-    if db.get(Customer, payload.customer_id) is None:
+def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("accounting"))):
+    if db.scalar(select(Customer).where(Customer.id == payload.customer_id, Customer.organization_id == actor.organization_id)) is None:
         raise HTTPException(status_code=404, detail="Customer not found")
-    return create_invoice_service(db, payload)
+    return create_invoice_service(db, payload, actor.organization_id)
 
 
 @router.get("/accounting/summary", response_model=AccountingSummaryRead)
-def accounting_summary(db: Session = Depends(get_db)):
-    return accounting_service.get_summary(db)
+def accounting_summary(db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("accounting"))):
+    return accounting_service.get_summary(db, actor.organization_id)
 
 
 @router.get("/accounting/monthly-report", response_model=list[MonthlyReportEntryRead])
-def accounting_monthly_report(db: Session = Depends(get_db)):
-    return accounting_service.get_monthly_report(db)
+def accounting_monthly_report(db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("accounting"))):
+    return accounting_service.get_monthly_report(db, actor.organization_id)
 
 
 @router.get("/assistant/context")
-def assistant_context(q: str, db: Session = Depends(get_db)) -> FinancialContext:
-    return build_context(db, q)
+def assistant_context(q: str, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("read"))) -> FinancialContext:
+    return build_context(db, q, organization_id=actor.organization_id)
 
 
 @router.get("/payments", response_model=list[PaymentRead])
-def list_payments(db: Session = Depends(get_db)):
-    return db.scalars(select(Payment)).all()
+def list_payments(db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("read"))):
+    return db.scalars(select(Payment).where(Payment.organization_id == actor.organization_id)).all()
 
 
 @router.post("/payments", response_model=PaymentRead, status_code=status.HTTP_201_CREATED)
-def create_payment(payload: PaymentCreate, db: Session = Depends(get_db)):
-    item = Payment(**payload.model_dump())
+def create_payment(payload: PaymentCreate, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("accounting"))):
+    if db.scalar(select(Invoice).where(Invoice.id == payload.invoice_id, Invoice.organization_id == actor.organization_id)) is None:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    item = Payment(organization_id=actor.organization_id, **payload.model_dump())
     db.add(item)
     db.commit()
     db.refresh(item)

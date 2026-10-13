@@ -40,22 +40,22 @@ class FinancialRetriever(ABC):
     """Contract for retrieving grounded financial facts. No table access outside this layer."""
 
     @abstractmethod
-    def retrieve(self, db: Session, query: str) -> list[FinancialFact]:
+    def retrieve(self, db: Session, query: str, organization_id=None) -> list[FinancialFact]:
         raise NotImplementedError
 
 
 class CategorySpendingRetriever(FinancialRetriever):
     """Answers "how much did I spend on <category>?" style queries."""
 
-    def retrieve(self, db: Session, query: str) -> list[FinancialFact]:
+    def retrieve(self, db: Session, query: str, organization_id=None) -> list[FinancialFact]:
         lowered = query.lower()
-        categories = db.scalars(select(ExpenseCategory)).all()
+        categories = db.scalars(select(ExpenseCategory).where(ExpenseCategory.organization_id == organization_id)).all()
         matched = [c for c in categories if c.name.lower() in lowered]
         facts: list[FinancialFact] = []
         for category in matched:
             total = sum(
                 (e.amount for e in db.scalars(
-                    select(Expense).where(Expense.category_id == category.id)
+                    select(Expense).where(Expense.category_id == category.id, Expense.organization_id == organization_id)
                 ).all()),
                 start=Decimal("0"),
             )
@@ -72,8 +72,8 @@ class CategorySpendingRetriever(FinancialRetriever):
 class ProfitRetriever(FinancialRetriever):
     """Answers "what is my monthly profit?" / "why did expenses increase?" style queries."""
 
-    def retrieve(self, db: Session, query: str) -> list[FinancialFact]:
-        summary = accounting_service.get_summary(db)
+    def retrieve(self, db: Session, query: str, organization_id=None) -> list[FinancialFact]:
+        summary = accounting_service.get_summary(db, organization_id)
         return [
             FinancialFact(label="total_revenue", value=summary.total_revenue, source="payments"),
             FinancialFact(label="total_expenses", value=summary.total_expenses, source="expenses"),
@@ -85,7 +85,7 @@ DEFAULT_RETRIEVERS: list[FinancialRetriever] = [CategorySpendingRetriever(), Pro
 
 
 def build_context(
-    db: Session, query: str, retrievers: list[FinancialRetriever] | None = None
+    db: Session, query: str, retrievers: list[FinancialRetriever] | None = None, organization_id=None
 ) -> FinancialContext:
     """Run retrievers against the query and assemble a typed, citable context.
 
@@ -94,5 +94,5 @@ def build_context(
     """
     facts: list[FinancialFact] = []
     for retriever in retrievers or DEFAULT_RETRIEVERS:
-        facts.extend(retriever.retrieve(db, query))
+        facts.extend(retriever.retrieve(db, query, organization_id))
     return FinancialContext(query=query, facts=facts)

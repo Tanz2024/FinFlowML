@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
+from backend.app.core.auth import CurrentUser, require_permission
 from backend.app.database.session import get_db
 from backend.app.models.receipt import Receipt
 from backend.app.services.receipt_review import store_extraction
@@ -60,7 +61,7 @@ async def demo_page() -> str:
 
 
 @router.post("/predict")
-async def predict_receipt(request: Request, db: Session = Depends(get_db)) -> dict[str, object]:
+async def predict_receipt(request: Request, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("review"))) -> dict[str, object]:
     content_type = request.headers.get("content-type", "")
     if not content_type.startswith("multipart/form-data"):
         raise HTTPException(status_code=415, detail="Upload an image as multipart form data")
@@ -90,6 +91,7 @@ async def predict_receipt(request: Request, db: Session = Depends(get_db)) -> di
     if prediction is None:
         raise HTTPException(status_code=422, detail=parsing_error or "Model output could not be parsed")
     item = Receipt(
+        organization_id=actor.organization_id,
         source_filename=filename,
         ocr_text="mock OCR text" if os.environ.get("FINFLOW_MOCK_EXTRACTION") else None,
         extracted_data=prediction,

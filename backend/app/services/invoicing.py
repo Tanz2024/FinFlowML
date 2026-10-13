@@ -7,9 +7,9 @@ from backend.app.models.invoice_item import InvoiceItem
 from backend.app.schemas.invoice import InvoiceCreate
 
 
-def create_invoice(db: Session, payload: InvoiceCreate) -> Invoice:
+def create_invoice(db: Session, payload: InvoiceCreate, organization_id=None) -> Invoice:
     data = payload.model_dump(exclude={"items"})
-    invoice = Invoice(**data)
+    invoice = Invoice(organization_id=organization_id, **data)
     db.add(invoice)
     db.flush()
     for item in payload.items:

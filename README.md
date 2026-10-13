@@ -82,3 +82,6 @@ created only after explicit approval. Run the local mock demonstration with
 `FINFLOW_MOCK_EXTRACTION=1`; mock values are not AI inference. See
 [docs/stage5a-human-review.md](docs/stage5a-human-review.md) for the lifecycle,
 API endpoints, migration, and local-only security limitation.
+# FinFlowML
+
+Stage 5B adds authenticated, organization-scoped receipt review and accounting APIs. Read [docs/stage5b-security.md](docs/stage5b-security.md) for configuration, RBAC, migration safety, and local demonstration instructions.
