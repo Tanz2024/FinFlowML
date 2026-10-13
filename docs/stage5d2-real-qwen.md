@@ -9,7 +9,7 @@ In a fresh Colab T4 runtime, mount Drive, clone the pushed commit, install the t
 ```bash
 git clone https://github.com/Tanz2024/FinFlowML.git /content/FinFlowML
 cd /content/FinFlowML
-git checkout cc7fad0
+git checkout c7288cd
 pip install -r requirements-training.txt paddleocr paddlepaddle
 python scripts/qwen_gpu_smoke.py \
   --image /content/receipt.jpg \
