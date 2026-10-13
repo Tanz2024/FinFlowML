@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from backend.app.core.auth import CurrentUser, create_access_token, require_permission
 from backend.app.core.config import settings
 from backend.app.database.session import get_db
+from backend.app.models.audit_event import AuditEvent
 from backend.app.models.customer import Customer
 from backend.app.models.expense import Expense
 from backend.app.models.expense_category import ExpenseCategory
@@ -32,6 +33,7 @@ from backend.app.schemas.expense import (
 from backend.app.schemas.invoice import InvoiceCreate, InvoiceRead
 from backend.app.schemas.payment import PaymentCreate, PaymentRead
 from backend.app.services import accounting as accounting_service
+from backend.app.services.audit import record_event
 from backend.app.services.financial_query import FinancialContext, build_context
 from backend.app.services.invoicing import create_invoice as create_invoice_service
 from backend.app.services.receipt_review import (
@@ -43,6 +45,19 @@ from backend.app.services.receipt_review import (
 )
 
 router = APIRouter()
+
+
+@router.get("/admin/audit-events")
+def audit_events(limit: int = 50, offset: int = 0, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("manage_users"))):
+    limit = min(max(limit, 1), 200)
+    events = db.scalars(select(AuditEvent).where(AuditEvent.organization_id == actor.organization_id).order_by(AuditEvent.created_at.desc()).offset(offset).limit(limit)).all()
+    return [{"id": event.id, "action": event.action, "entity_type": event.entity_type, "entity_id": event.entity_id, "actor_id": event.actor_id, "correlation_id": event.correlation_id, "details": event.details, "model_id": event.model_id, "model_revision": event.model_revision, "adapter_fingerprint": event.adapter_fingerprint, "created_at": event.created_at} for event in events]
+
+
+@router.get("/admin/jobs")
+def admin_jobs(limit: int = 50, offset: int = 0, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("manage_users"))):
+    limit = min(max(limit, 1), 200)
+    return db.scalars(select(ExtractionJob).where(ExtractionJob.organization_id == actor.organization_id).order_by(ExtractionJob.created_at.desc()).offset(offset).limit(limit)).all()
 
 
 @router.get("/jobs/{job_id}")
@@ -63,6 +78,7 @@ def retry_extraction_job(job_id: UUID, db: Session = Depends(get_db), actor: Cur
     job.state = ExtractionJobState.QUEUED
     job.error_code = job.error_message = None
     job.next_attempt_at = None
+    record_event(db, actor.organization_id, "extraction.retry_requested", "extraction_job", job.id, actor_id=actor.user.id, correlation_id=str(job.id))
     db.commit()
     return {"job_id": job.id, "state": job.state}
 
@@ -135,6 +151,7 @@ def correct_receipt(receipt_id: UUID, payload: ReceiptCorrection, db: Session = 
     item.corrected_by_user_id = actor.user.id
     item.last_action_by_user_id = actor.user.id
     item.validation_errors = validate_receipt_data(effective_data(item))
+    record_event(db, actor.organization_id, "receipt.corrected", "receipt", item.id, actor_id=actor.user.id, details={"fields": sorted(payload.corrections)})
     db.commit()
     db.refresh(item)
     return item
@@ -159,6 +176,8 @@ def create_expense(payload: ExpenseCreate, db: Session = Depends(get_db), actor:
         raise HTTPException(status_code=404, detail="Expense category not found")
     item = Expense(organization_id=actor.organization_id, **payload.model_dump())
     db.add(item)
+    db.flush()
+    record_event(db, actor.organization_id, "expense.created", "expense", item.id, actor_id=actor.user.id, details={"receipt_id": str(payload.receipt_id)})
     db.commit()
     db.refresh(item)
     return item

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from backend.app.models.expense import Expense
 from backend.app.models.receipt import Receipt
 from backend.app.models.receipt_status import VALID_TRANSITIONS, ReceiptStatus
+from backend.app.services.audit import record_event
 from backend.app.services.category_matcher import categorize_merchant
 from backend.app.services.currency import normalize_currency
 
@@ -113,6 +114,8 @@ def approve_receipt(db: Session, receipt: Receipt, actor_id=None, organization_i
         receipt.approved_by_user_id = actor_id
         receipt.last_action_by_user_id = actor_id
         receipt.validation_errors = []
+        record_event(db, organization_id, "receipt.approved", "receipt", receipt.id, actor_id=actor_id)
+        record_event(db, organization_id, "expense.created", "expense", existing.id, actor_id=actor_id, details={"receipt_id": str(receipt.id)})
         db.commit()
         db.refresh(existing)
         return existing
@@ -127,6 +130,7 @@ def reject_receipt(db: Session, receipt: Receipt, actor_id=None) -> Receipt:
     transition(receipt, ReceiptStatus.REJECTED)
     receipt.rejected_by_user_id = actor_id
     receipt.last_action_by_user_id = actor_id
+    record_event(db, receipt.organization_id, "receipt.rejected", "receipt", receipt.id, actor_id=actor_id)
     db.commit()
     db.refresh(receipt)
     return receipt

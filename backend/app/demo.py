@@ -15,6 +15,7 @@ from backend.app.core.config import settings
 from backend.app.database.session import get_db
 from backend.app.models.extraction_job import ExtractionJob
 from backend.app.models.receipt import Receipt
+from backend.app.services.audit import record_event
 from backend.app.services.extraction_jobs import create_job, durable_upload
 
 router = APIRouter()
@@ -74,7 +75,7 @@ async def demo_page() -> str:
 
 
 @router.post("/predict", status_code=202)
-async def predict_receipt(request: Request, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("review")), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, object]:
+async def predict_receipt(request: Request, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("review")), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"), correlation_id: str | None = Header(default=None, alias="X-Correlation-ID")) -> dict[str, object]:
     content_type = request.headers.get("content-type", "")
     if not content_type.startswith("multipart/form-data"):
         raise HTTPException(status_code=415, detail="Upload an image as multipart form data")
@@ -96,6 +97,7 @@ async def predict_receipt(request: Request, db: Session = Depends(get_db), actor
     )
     db.add(item)
     db.flush()
+    record_event(db, actor.organization_id, "receipt.uploaded", "receipt", item.id, actor_id=actor.user.id, correlation_id=correlation_id, details={"filename": filename, "payload_sha256": payload_hash})
     try:
         job = create_job(db, actor.organization_id, item, path, idempotency_key, payload_hash)
     except ValueError as exc:

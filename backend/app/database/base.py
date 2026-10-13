@@ -1,4 +1,5 @@
 from backend.app.database.registry import Base  # noqa: F401
+from backend.app.models.audit_event import AuditEvent  # noqa: E402, F401
 from backend.app.models.customer import Customer  # noqa: E402, F401
 from backend.app.models.expense import Expense  # noqa: E402, F401
 from backend.app.models.expense_category import ExpenseCategory  # noqa: E402, F401

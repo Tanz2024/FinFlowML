@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -11,8 +12,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import settings
+from backend.app.core.observability import elapsed_seconds, job_log
 from backend.app.models.extraction_job import ExtractionJob, ExtractionJobState
 from backend.app.models.receipt import Receipt
+from backend.app.services.audit import record_event
 from backend.app.services.receipt_review import store_extraction
 
 
@@ -76,6 +79,7 @@ def claim_next(db: Session) -> ExtractionJob | None:
     candidate.updated_at = now
     db.commit()
     db.refresh(candidate)
+    job_log("job.processing", job_id=candidate.id, organization_id=candidate.organization_id, fence=candidate.fence)
     return candidate
 
 
@@ -101,6 +105,7 @@ def process_job(db: Session, job_id: UUID, lease_owner: str | None = None, fence
         db.commit()
         return job
     try:
+        started = time.monotonic()
         if os.environ.get("FINFLOW_MOCK_EXTRACTION", "").lower() in {"1", "true", "yes"}:
             prediction = {"company": "Mock Cafe", "date": "2025-01-15", "address": "1 Demo Road", "total": "12.50", "currency": "USD"}
         else:
@@ -122,11 +127,13 @@ def process_job(db: Session, job_id: UUID, lease_owner: str | None = None, fence
         job.model_id = settings.model_id
         job.model_revision = settings.model_revision or None
         job.adapter_fingerprint = adapter_fingerprint(settings.adapter_path)
+        record_event(db, job.organization_id, "extraction.completed", "extraction_job", job.id, correlation_id=str(job.id), details={"latency_seconds": elapsed_seconds(started)}, model_id=job.model_id, model_revision=job.model_revision, adapter_fingerprint=job.adapter_fingerprint)
+        job_log("job.completed", job_id=job.id, latency_seconds=elapsed_seconds(started))
         db.commit()
         return job
     except Exception as exc:
         db.rollback()
-        return fail_job(db, job, "extraction_failed", str(exc)[:500])
+        return fail_job(db, job, "extraction_failed", str(exc)[:500], lease_owner, fence)
 
 
 def renew_lease(db: Session, job_id: UUID, lease_owner: str, fence: int) -> bool:
@@ -142,20 +149,28 @@ def renew_lease(db: Session, job_id: UUID, lease_owner: str, fence: int) -> bool
     return updated == 1
 
 
-def fail_job(db: Session, job: ExtractionJob, code: str, message: str) -> ExtractionJob:
-    job.retry_count += 1
-    terminal = job.retry_count >= settings.extraction_max_retries
-    job.state = ExtractionJobState.TERMINAL_FAILED if terminal else ExtractionJobState.RETRYABLE_FAILED
-    job.error_code, job.error_message = code, message
-    job.lease_until = None
-    job.lease_owner = None
-    job.next_attempt_at = None if terminal else datetime.now(UTC) + timedelta(seconds=2 ** job.retry_count)
-    receipt = db.get(Receipt, job.receipt_id)
-    if receipt and terminal:
+def fail_job(db: Session, job: ExtractionJob, code: str, message: str, lease_owner: str | None = None, fence: int | None = None) -> ExtractionJob:
+    lease_owner = lease_owner or job.lease_owner
+    fence = fence if fence is not None else job.fence
+    current = db.get(ExtractionJob, job.id)
+    if current is None or current.state != ExtractionJobState.PROCESSING or current.lease_owner != lease_owner or current.fence != fence:
+        return current or job
+    retry_count = current.retry_count + 1
+    terminal = retry_count >= settings.extraction_max_retries
+    current.retry_count = retry_count
+    current.state = ExtractionJobState.TERMINAL_FAILED if terminal else ExtractionJobState.RETRYABLE_FAILED
+    current.error_code, current.error_message = code, message
+    current.lease_until = None
+    current.lease_owner = None
+    current.next_attempt_at = None if terminal else datetime.now(UTC) + timedelta(seconds=2 ** retry_count)
+    receipt = db.get(Receipt, current.receipt_id)
+    if receipt and terminal and receipt.status not in {"approved", "rejected"}:
         receipt.status = "failed"
+    record_event(db, current.organization_id, "extraction.failed", "extraction_job", current.id, correlation_id=str(current.id), details={"error_code": code, "retry_count": retry_count})
+    job_log("job.failed", job_id=current.id, retry_count=retry_count, terminal=terminal)
     db.commit()
-    db.refresh(job)
-    return job
+    db.refresh(current)
+    return current
 
 
 def reclaim_stale(db: Session) -> int:
