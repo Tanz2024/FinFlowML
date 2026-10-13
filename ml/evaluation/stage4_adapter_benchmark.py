@@ -8,6 +8,7 @@ only for split-integrity metadata.
 import argparse
 import hashlib
 import json
+import os
 import platform
 import time
 from datetime import UTC, datetime
@@ -125,9 +126,52 @@ def _load_for_eval(adapter_path: Path | None, compute_dtype, device_map):
     )
 
 
-def _evaluate_model(loaded, examples, rows, label: str, max_new_tokens: int) -> tuple[dict, list[dict]]:
-    records = []
-    for example in examples:
+def _write_json(path: Path, value: object) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(value, indent=2, default=str) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _adapter_signature(adapter_path: Path) -> dict[str, object]:
+    files = []
+    for name in ("adapter_config.json", "adapter_model.safetensors", "adapter_model.bin"):
+        path = adapter_path / name
+        if path.is_file():
+            digest = hashlib.sha256()
+            with path.open("rb") as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(block)
+            files.append({"name": name, "size": path.stat().st_size, "sha256": digest.hexdigest()})
+    return {"path": str(adapter_path.resolve()), "files": files}
+
+
+def _load_checkpoint(path: Path, manifest: dict[str, object], resume: bool) -> list[dict]:
+    if not resume or not path.is_file():
+        return []
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("manifest") != manifest:
+        raise ValueError(f"checkpoint manifest mismatch: {path}")
+    records = payload.get("records")
+    if not isinstance(records, list):
+        raise ValueError(f"checkpoint records are not a list: {path}")
+    return records
+
+
+def _evaluate_model(
+    loaded,
+    examples,
+    rows,
+    label: str,
+    max_new_tokens: int,
+    checkpoint_path: Path,
+    manifest: dict[str, object],
+    resume: bool,
+) -> tuple[dict, list[dict]]:
+    records = _load_checkpoint(checkpoint_path, manifest, resume)
+    expected_ids = [item.example_id for item in examples[: len(records)]]
+    if [item["example_id"] for item in records] != expected_ids:
+        raise ValueError(f"checkpoint document identities do not match current test split: {checkpoint_path}")
+    for example in examples[len(records) :]:
         ocr_text = " ".join(rows[example.index]["words"])
         rendered = loaded.tokenizer.apply_chat_template(
             [{"role": "user", "content": build_prompt(ocr_text)}],
@@ -158,6 +202,7 @@ def _evaluate_model(loaded, examples, rows, label: str, max_new_tokens: int) -> 
                 "scores": score,
             }
         )
+        _write_json(checkpoint_path, {"manifest": manifest, "model_label": label, "records": records})
     summary = {
         "model_label": label,
         "documents": len(records),
@@ -191,6 +236,7 @@ def run(
     dataset_id: str = DATASET_ID,
     max_new_tokens: int = 192,
     dataset_revision: str | None = None,
+    resume: bool = False,
 ) -> dict:
     validate_adapter_path(adapter_path)
     integrity = _dataset_integrity(dataset_id, dataset_revision)
@@ -208,21 +254,68 @@ def run(
     dataset = load_sroie_dataset(dataset_id, revision=dataset_revision)
     examples = process_split(dataset["test"], "test")
     rows = dataset["test"].remove_columns(["image"])
+    document_identities = [
+        {"example_id": item.example_id, "fingerprint": item.fingerprint} for item in examples
+    ]
     common = {
         "created_at": datetime.now(UTC).isoformat(),
-        "dataset_integrity": {**integrity, "dataset_revision": dataset_revision or "not supplied"},
+        "dataset_integrity": {
+            **integrity,
+            "dataset_revision": dataset_revision or "not supplied",
+            "official_test_split_historical_training_or_selection_verified": False,
+            "code_path_test_split_isolated": True,
+        },
         "base_model": {"id": MODEL_ID, "revision": MODEL_REVISION},
-        "adapter": {"path": str(adapter_path.resolve()), "provenance": "pre-trained Colab Stage 4 best epoch 3"},
+        "adapter": {
+            "provenance": "pre-trained Colab Stage 4 best epoch 3",
+            "signature": _adapter_signature(adapter_path),
+        },
         "evaluation": {"max_new_tokens": max_new_tokens, "do_sample": False, "prompt": "ml/extraction/prompt.py", "normalization": "ml/data/normalize.py", "metrics": "ml/evaluation/metrics.py"},
         "packages": _package_versions(("torch", "transformers", "peft", "bitsandbytes", "datasets", "safetensors")),
         "hardware": _hardware(),
     }
+    manifest = {
+        "base_model": common["base_model"],
+        "adapter": common["adapter"],
+        "dataset_id": dataset_id,
+        "dataset_revision": dataset_revision or "not supplied",
+        "split_fingerprints": integrity["split_fingerprints"],
+        "document_identities": document_identities,
+        "evaluation": common["evaluation"],
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = output_dir / "evaluation_manifest.json"
+    if manifest_path.is_file() and not resume:
+        raise FileExistsError(f"output already contains a manifest; use --resume: {output_dir}")
+    if resume and manifest_path.is_file():
+        saved_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if saved_manifest != manifest:
+            raise ValueError("evaluation manifest mismatch; refusing unsafe resume")
+    _write_json(manifest_path, manifest)
     base = _load_for_eval(None, compute_dtype, device_map)
-    base_summary, base_records = _evaluate_model(base, examples, rows, "base", max_new_tokens)
+    base_summary, base_records = _evaluate_model(
+        base,
+        examples,
+        rows,
+        "base",
+        max_new_tokens,
+        output_dir / "base_predictions.partial.json",
+        manifest,
+        resume,
+    )
     del base
     torch.cuda.empty_cache()
     adapter = _load_for_eval(adapter_path, compute_dtype, device_map)
-    adapter_summary, adapter_records = _evaluate_model(adapter, examples, rows, "adapter", max_new_tokens)
+    adapter_summary, adapter_records = _evaluate_model(
+        adapter,
+        examples,
+        rows,
+        "adapter",
+        max_new_tokens,
+        output_dir / "adapter_predictions.partial.json",
+        manifest,
+        resume,
+    )
     paired = []
     for before, after in zip(base_records, adapter_records, strict=True):
         paired.append(
@@ -239,10 +332,9 @@ def run(
             }
         )
     report = {**common, "base_summary": base_summary, "adapter_summary": adapter_summary, "paired_summary": {"documents_improved": sum(item["macro_delta"] > 0 for item in paired), "documents_regressed": sum(item["macro_delta"] < 0 for item in paired), "mean_macro_delta": mean(item["macro_delta"] for item in paired)}, "paired_documents": paired}
-    output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "report.json").write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
-    (output_dir / "base_predictions.json").write_text(json.dumps(base_records, indent=2, default=str) + "\n", encoding="utf-8")
-    (output_dir / "adapter_predictions.json").write_text(json.dumps(adapter_records, indent=2, default=str) + "\n", encoding="utf-8")
+    _write_json(output_dir / "report.json", report)
+    _write_json(output_dir / "base_predictions.json", base_records)
+    _write_json(output_dir / "adapter_predictions.json", adapter_records)
     return report
 
 
@@ -253,8 +345,9 @@ def main() -> None:
     parser.add_argument("--dataset-id", default=DATASET_ID)
     parser.add_argument("--dataset-revision", help="Hugging Face dataset commit/revision used for this run")
     parser.add_argument("--max-new-tokens", type=int, default=192)
+    parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
-    report = run(args.adapter, args.output, args.dataset_id, args.max_new_tokens, args.dataset_revision)
+    report = run(args.adapter, args.output, args.dataset_id, args.max_new_tokens, args.dataset_revision, args.resume)
     print(json.dumps({"output": str(args.output), "base": report["base_summary"], "adapter": report["adapter_summary"]}, indent=2))
 
 

@@ -10,7 +10,14 @@ The runner is `ml/evaluation/stage4_adapter_benchmark.py`. It reuses the
 repository's SROIE loader, content fingerprints, prompt, parser, normalization,
 and metrics. It writes only to the new output directory supplied by `--output`
 (default: `results/stage4_evaluation/`): `report.json`,
-`base_predictions.json`, and `adapter_predictions.json`.
+`base_predictions.json`, and `adapter_predictions.json`. During execution it
+also writes a manifest and independent `base_predictions.partial.json` and
+`adapter_predictions.partial.json` checkpoints after every document.
+
+If Colab disconnects, rerun the same command with `--resume` and the same
+output directory. Resume is refused if the model revision, adapter file
+signatures, dataset revision, split fingerprints, document identities, prompt,
+decoding settings, or metrics configuration differ.
 
 ## Minimal Colab procedure
 
@@ -47,6 +54,10 @@ Run the paired benchmark:
   --dataset-revision "<DATASET_COMMIT_SHA>"
 ```
 
+For a disconnected run, set `EVAL_OUTPUT` to the existing run directory and
+add `--resume`. The base and adapter checkpoints remain separate and paired by
+document identity; no completed predictions are reused across configurations.
+
 Replace `<DATASET_COMMIT_SHA>` with the dataset commit shown by the Colab
 dataset download/logging step. If the dataset source is intentionally left at
 the default revision, pass `--dataset-revision` with the recorded commit or
@@ -64,8 +75,10 @@ Generation is deterministic: `do_sample=False`, `max_new_tokens=192`.
 
 ## Interpretation safeguards
 
-- The official test split is never loaded by the training runner in this
-  evaluation path and is not used for tuning or checkpoint selection.
+- The evaluation code isolates the official test split from its train and
+  validation processing path. Historical training/test isolation is **not
+  verified** unless the original training dataset revision and artifacts are
+  available.
 - The adapter is the externally supplied Colab artifact; the local repository
   does not contain or recreate it.
 - A locally prepared runner is not evidence of execution. Only the generated
