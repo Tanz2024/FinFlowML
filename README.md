@@ -37,3 +37,29 @@ ruff check .
 ```
 
 Run the dataset inspector with `python ml/data/load_sroie.py`.
+
+## Stage 5 frontend demo
+
+The minimal receipt demo connects an image upload to the existing OCR → QLoRA
+inference → parser pipeline. Start the API from the repository root:
+
+```bash
+uvicorn backend.app.main:app --reload
+```
+
+Open <http://127.0.0.1:8000/demo> and choose a receipt image. Set `ADAPTER_PATH`
+or `FINFLOW_TRAINING_DIR` when the Stage 4 adapter is stored elsewhere.
+
+## Stage 5 frontend demo
+
+The minimal receipt demo connects an image upload to the existing OCR → QLoRA
+inference → parser pipeline. Install the project requirements, then start the
+API from the repository root:
+
+```bash
+uvicorn backend.app.main:app --reload
+```
+
+Open <http://127.0.0.1:8000/demo>, choose a receipt image, and click **Extract
+Receipt Data**. Set `ADAPTER_PATH` (or `FINFLOW_TRAINING_DIR`) if the adapter is
+stored somewhere other than the default Stage 4 path.
