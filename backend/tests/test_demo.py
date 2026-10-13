@@ -7,22 +7,15 @@ def test_demo_page(client):
 def test_predict_upload_uses_stage5_pipeline(client, monkeypatch):
     import backend.app.demo as demo
 
-    monkeypatch.setattr(
-        demo,
-        "predict_image",
-        lambda image, base, adapter: (
-            "OCR text",
-            "raw output",
-            {"company": "Shop", "date": "2025-01-01", "address": "Road", "total": "10.00"},
-            None,
-        ),
-    )
+    monkeypatch.setattr(demo, "_uploaded_file", lambda body, content_type: ("receipt.jpg", b"valid image"))
     response = client.post(
         "/predict",
         files={"receipt": ("receipt.jpg", b"fake image", "image/jpeg")},
+        headers={"Idempotency-Key": "demo-test-1"},
     )
-    assert response.status_code == 200
-    assert response.json()["total"] == "10.00"
+    assert response.status_code == 202
+    assert response.json()["state"] == "queued"
+    assert "job_id" in response.json()
 
 
 def test_predict_requires_image(client):

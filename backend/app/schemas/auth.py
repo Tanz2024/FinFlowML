@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 class LoginRequest(BaseModel):
     email: str = Field(min_length=3)
     password: str = Field(min_length=12)
+    organization_id: UUID | None = None
 
 
 class TokenResponse(BaseModel):

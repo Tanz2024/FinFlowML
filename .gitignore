@@ -19,6 +19,7 @@ checkpoints/
 *.zip
 data/raw/
 data/processed/
+data/uploads/
 ml/data/processed/
 results/baseline/
 results/training/

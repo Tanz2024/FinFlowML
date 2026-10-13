@@ -2,6 +2,7 @@ from backend.app.database.registry import Base  # noqa: F401
 from backend.app.models.customer import Customer  # noqa: E402, F401
 from backend.app.models.expense import Expense  # noqa: E402, F401
 from backend.app.models.expense_category import ExpenseCategory  # noqa: E402, F401
+from backend.app.models.extraction_job import ExtractionJob  # noqa: E402, F401
 from backend.app.models.invoice import Invoice  # noqa: E402, F401
 from backend.app.models.invoice_item import InvoiceItem  # noqa: E402, F401
 from backend.app.models.organization import Membership, Organization, User  # noqa: E402, F401

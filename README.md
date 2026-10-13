@@ -85,3 +85,5 @@ API endpoints, migration, and local-only security limitation.
 # FinFlowML
 
 Stage 5B adds authenticated, organization-scoped receipt review and accounting APIs. Read [docs/stage5b-security.md](docs/stage5b-security.md) for configuration, RBAC, migration safety, and local demonstration instructions.
+
+Stage 5C adds durable asynchronous receipt jobs. See [docs/stage5c-async-processing.md](docs/stage5c-async-processing.md).

@@ -11,6 +11,7 @@ from backend.app.database.session import get_db
 from backend.app.models.customer import Customer
 from backend.app.models.expense import Expense
 from backend.app.models.expense_category import ExpenseCategory
+from backend.app.models.extraction_job import ExtractionJob, ExtractionJobState
 from backend.app.models.invoice import Invoice
 from backend.app.models.organization import Membership, User
 from backend.app.models.payment import Payment
@@ -44,6 +45,28 @@ from backend.app.services.receipt_review import (
 router = APIRouter()
 
 
+@router.get("/jobs/{job_id}")
+def extraction_job_status(job_id: UUID, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("read"))):
+    job = db.scalar(select(ExtractionJob).where(ExtractionJob.id == job_id, ExtractionJob.organization_id == actor.organization_id))
+    if job is None:
+        raise HTTPException(status_code=404, detail="Extraction job not found")
+    return {"job_id": job.id, "receipt_id": job.receipt_id, "state": job.state, "retry_count": job.retry_count, "error_code": job.error_code, "error_message": job.error_message}
+
+
+@router.post("/jobs/{job_id}/retry")
+def retry_extraction_job(job_id: UUID, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("review"))):
+    job = db.scalar(select(ExtractionJob).where(ExtractionJob.id == job_id, ExtractionJob.organization_id == actor.organization_id))
+    if job is None:
+        raise HTTPException(status_code=404, detail="Extraction job not found")
+    if job.state not in {ExtractionJobState.RETRYABLE_FAILED, ExtractionJobState.TERMINAL_FAILED}:
+        raise HTTPException(status_code=409, detail="job is not failed")
+    job.state = ExtractionJobState.QUEUED
+    job.error_code = job.error_message = None
+    job.next_attempt_at = None
+    db.commit()
+    return {"job_id": job.id, "state": job.state}
+
+
 @router.post("/auth/login", response_model=TokenResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
     email = payload.email.strip().lower()
@@ -53,7 +76,8 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     from backend.app.core.auth import verify_password
     if not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="invalid credentials")
-    membership = db.scalar(select(Membership).where(Membership.user_id == user.id))
+    memberships = db.scalars(select(Membership).where(Membership.user_id == user.id)).all()
+    membership = next((m for m in memberships if m.organization_id == payload.organization_id), None) if payload.organization_id else (memberships[0] if len(memberships) == 1 else None)
     if not user.is_active or membership is None:
         raise HTTPException(status_code=401, detail="invalid credentials")
     return TokenResponse(
