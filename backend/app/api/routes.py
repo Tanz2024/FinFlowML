@@ -19,15 +19,23 @@ from backend.app.schemas.expense import (
     ExpenseCreate,
     ExpenseRead,
     ExpenseSummary,
+    ReceiptCorrection,
     ReceiptCreate,
     ReceiptRead,
+    ReceiptStatusRead,
 )
 from backend.app.schemas.invoice import InvoiceCreate, InvoiceRead
 from backend.app.schemas.payment import PaymentCreate, PaymentRead
 from backend.app.services import accounting as accounting_service
-from backend.app.services.expense_pipeline import process_receipt
 from backend.app.services.financial_query import FinancialContext, build_context
 from backend.app.services.invoicing import create_invoice as create_invoice_service
+from backend.app.services.receipt_review import (
+    approve_receipt,
+    effective_data,
+    reject_receipt,
+    store_extraction,
+    validate_receipt_data,
+)
 
 router = APIRouter()
 
@@ -35,12 +43,66 @@ router = APIRouter()
 @router.post("/receipts", response_model=ReceiptRead, status_code=status.HTTP_201_CREATED)
 def create_receipt(payload: ReceiptCreate, db: Session = Depends(get_db)):
     item = Receipt(**payload.model_dump())
+    item.status = "pending"
     db.add(item)
     db.commit()
     db.refresh(item)
-    process_receipt(db, item)
+    return store_extraction(db, item)
+
+
+@router.get("/receipts/pending", response_model=list[ReceiptRead])
+def list_pending_receipts(db: Session = Depends(get_db)):
+    return db.scalars(select(Receipt).where(Receipt.status.in_(["pending", "needs_review"])).order_by(Receipt.created_at)).all()
+
+
+@router.get("/receipts/{receipt_id}", response_model=ReceiptRead)
+def get_receipt(receipt_id: UUID, db: Session = Depends(get_db)):
+    item = db.get(Receipt, receipt_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    return item
+
+
+@router.get("/receipts/{receipt_id}/status", response_model=ReceiptStatusRead)
+def receipt_status(receipt_id: UUID, db: Session = Depends(get_db)):
+    item = db.get(Receipt, receipt_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    expense = db.scalar(select(Expense).where(Expense.receipt_id == item.id))
+    return ReceiptStatusRead(id=item.id, status=item.status, validation_errors=item.validation_errors, effective_data=effective_data(item), expense_id=expense.id if expense else None)
+
+
+@router.patch("/receipts/{receipt_id}/corrections", response_model=ReceiptRead)
+def correct_receipt(receipt_id: UUID, payload: ReceiptCorrection, db: Session = Depends(get_db)):
+    item = db.get(Receipt, receipt_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    if item.status != "needs_review":
+        raise HTTPException(status_code=409, detail="only receipts needing review can be corrected")
+    unknown = set(payload.corrections) - {"company", "receipt_date", "address", "total", "currency"}
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"unsupported correction fields: {sorted(unknown)}")
+    item.corrected_data = {**(item.corrected_data or {}), **payload.corrections}
+    item.validation_errors = validate_receipt_data(effective_data(item))
+    db.commit()
     db.refresh(item)
     return item
+
+
+@router.post("/receipts/{receipt_id}/approve", response_model=ExpenseRead)
+def approve_receipt_endpoint(receipt_id: UUID, db: Session = Depends(get_db)):
+    item = db.get(Receipt, receipt_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    return approve_receipt(db, item)
+
+
+@router.post("/receipts/{receipt_id}/reject", response_model=ReceiptRead)
+def reject_receipt_endpoint(receipt_id: UUID, db: Session = Depends(get_db)):
+    item = db.get(Receipt, receipt_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    return reject_receipt(db, item)
 
 
 @router.post("/expenses", response_model=ExpenseRead, status_code=status.HTTP_201_CREATED)

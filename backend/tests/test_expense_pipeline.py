@@ -21,7 +21,7 @@ def test_normalize_currency_and_amount():
     assert normalize_amount(None) == Decimal("0.00")
 
 
-def test_receipt_creation_auto_creates_expense(client, client_db):
+def test_receipt_creation_waits_for_review_and_does_not_create_expense(client, client_db):
     response = client.post(
         "/receipts",
         json={
@@ -33,12 +33,8 @@ def test_receipt_creation_auto_creates_expense(client, client_db):
     )
     assert response.status_code == 201
     receipt = client_db.get(Receipt, UUID(response.json()["id"]))
-    assert receipt.status == "processed"
-    assert len(receipt.expenses) == 1
-    expense = receipt.expenses[0]
-    assert expense.amount == Decimal("9.99")
-    assert expense.currency == "USD"
-    assert expense.category.name == "Food & Dining"
+    assert receipt.status == "needs_review"
+    assert len(receipt.expenses) == 0
 
 
 def test_process_receipt_falls_back_to_uncategorized(client_db):

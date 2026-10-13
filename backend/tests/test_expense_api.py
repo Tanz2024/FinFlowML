@@ -43,11 +43,10 @@ def test_receipt_and_expense_apis_and_summary(client, client_db):
     summary = client.get("/expenses/summary")
     assert summary.status_code == 200
     body = summary.json()
-    # The receipt pipeline auto-created an Uncategorized $25.00 expense from the
-    # first receipt; the manual expense adds another $25.00 under Supplies.
-    assert body["total_spending"] == "50.00"
+    # Receipt submission is review-first; only the explicit manual expense exists.
+    assert body["total_spending"] == "25.00"
     assert body["spending_by_category"]["Supplies"] == "25.00"
-    assert body["spending_by_category"]["Uncategorized"] == "25.00"
+    assert "Uncategorized" not in body["spending_by_category"]
 
     categories = client.get("/expenses/categories")
     assert categories.json()[0]["name"] == "Supplies"

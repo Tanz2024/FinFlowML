@@ -73,3 +73,12 @@ model. See [docs/stage4-results.md](docs/stage4-results.md) for provenance,
 integrity qualifications, environment notes, and the model-free artifact
 verifier. Raw predictions, adapters, checkpoints, and model files are not
 committed.
+
+## Stage 5A human review
+
+Receipt ingestion is now review-first: extraction snapshots are validated and
+held in `needs_review`, corrections are stored separately, and an expense is
+created only after explicit approval. Run the local mock demonstration with
+`FINFLOW_MOCK_EXTRACTION=1`; mock values are not AI inference. See
+[docs/stage5a-human-review.md](docs/stage5a-human-review.md) for the lifecycle,
+API endpoints, migration, and local-only security limitation.

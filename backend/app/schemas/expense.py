@@ -22,6 +22,21 @@ class ReceiptRead(ReceiptCreate):
     id: UUID
     status: str
     created_at: datetime
+    raw_extracted_data: dict | None = None
+    corrected_data: dict | None = None
+    validation_errors: list[str] | None = None
+
+
+class ReceiptCorrection(BaseModel):
+    corrections: dict[str, str | None] = Field(default_factory=dict)
+
+
+class ReceiptStatusRead(BaseModel):
+    id: UUID
+    status: str
+    validation_errors: list[str] | None = None
+    effective_data: dict
+    expense_id: UUID | None = None
 
 
 class ExpenseCreate(BaseModel):
