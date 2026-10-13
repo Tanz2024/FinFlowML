@@ -110,7 +110,7 @@ def process_job(db: Session, job_id: UUID, lease_owner: str | None = None, fence
             prediction = {"company": "Mock Cafe", "date": "2025-01-15", "address": "1 Demo Road", "total": "12.50", "currency": "USD"}
         else:
             from ml.inference.predict import predict_image
-            _, _, prediction, parsing_error = predict_image(job.storage_path, settings.model_id, settings.adapter_path)
+            _, _, prediction, parsing_error = predict_image(job.storage_path, settings.model_id, settings.adapter_path, revision=settings.model_revision or None)
             if prediction is None:
                 raise ValueError(parsing_error or "model output could not be parsed")
         receipt.extracted_data = prediction

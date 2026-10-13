@@ -13,7 +13,7 @@ from ml.extraction.prompt import build_prompt
 from ml.modeling.loader import LoadedModel, load_finflow_model
 from ml.ocr.extract import OCRExtractionError, extract_text
 
-_MODEL_CACHE: dict[tuple[str, str | None], LoadedModel] = {}
+_MODEL_CACHE: dict[tuple[str, str | None, str | None, str], LoadedModel] = {}
 _MODEL_CACHE_LOCK = Lock()
 
 
@@ -24,7 +24,7 @@ def load_inference_model(
 ) -> LoadedModel:
     """Load the base tokenizer/model, then apply the optional LoRA adapter."""
 
-    key = (str(base_model), str(adapter_path) if adapter_path is not None else None)
+    key = (str(base_model), str(adapter_path) if adapter_path is not None else None, kwargs.get("revision"), repr(sorted((key, repr(value)) for key, value in kwargs.items())))
     with _MODEL_CACHE_LOCK:
         loaded = _MODEL_CACHE.get(key)
         if loaded is None:
@@ -45,6 +45,7 @@ def predict(
     adapter_path: str | None = None,
     *,
     max_new_tokens: int = 256,
+    revision: str | None = None,
 ) -> tuple[str, dict[str, str | None] | None, str | None]:
     """Generate and parse a structured prediction from receipt OCR text."""
 
@@ -59,6 +60,7 @@ def predict(
         adapter_path,
         quantization_config=quantization_config,
         device_map="auto",
+        revision=revision,
     )
     prompt = build_prompt(ocr_text)
     messages = [{"role": "user", "content": prompt}]
@@ -83,13 +85,15 @@ def predict_image(
     adapter_path: str | None = None,
     *,
     max_new_tokens: int = 256,
+    revision: str | None = None,
 ) -> tuple[str, str, dict[str, str | None] | None, str | None]:
     """Run OCR and structured receipt extraction for an image."""
 
     ocr_text = extract_text(image_path)
-    raw_output, prediction, parsing_error = predict(
-        ocr_text, base_model, adapter_path, max_new_tokens=max_new_tokens
-    )
+    predict_kwargs = {"max_new_tokens": max_new_tokens}
+    if revision is not None:
+        predict_kwargs["revision"] = revision
+    raw_output, prediction, parsing_error = predict(ocr_text, base_model, adapter_path, **predict_kwargs)
     return ocr_text, raw_output, prediction, parsing_error
 
 
