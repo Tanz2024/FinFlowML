@@ -17,6 +17,15 @@ _MODEL_CACHE: dict[tuple[str, str | None, str | None, str], LoadedModel] = {}
 _MODEL_CACHE_LOCK = Lock()
 
 
+def build_quantization_config() -> BitsAndBytesConfig:
+    return BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_compute_dtype=torch.float16,
+    )
+
+
 def load_inference_model(
     base_model: str,
     adapter_path: str | None = None,
@@ -49,12 +58,7 @@ def predict(
 ) -> tuple[str, dict[str, str | None] | None, str | None]:
     """Generate and parse a structured prediction from receipt OCR text."""
 
-    quantization_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_compute_dtype=torch.float16,
-    )
+    quantization_config = build_quantization_config()
     loaded = load_inference_model(
         base_model,
         adapter_path,
@@ -62,6 +66,11 @@ def predict(
         device_map="auto",
         revision=revision,
     )
+    return generate_prediction(loaded, ocr_text, max_new_tokens=max_new_tokens)
+
+
+def generate_prediction(loaded: LoadedModel, ocr_text: str, *, max_new_tokens: int = 256):
+    """Generate using an already-loaded model, avoiding a second model lookup/load."""
     prompt = build_prompt(ocr_text)
     messages = [{"role": "user", "content": prompt}]
     rendered_prompt = loaded.tokenizer.apply_chat_template(

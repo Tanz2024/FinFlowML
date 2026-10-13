@@ -48,9 +48,14 @@ def extract_text(image_path: str | Path) -> str:
 
     try:
         try:
-            ocr = PaddleOCR(lang="en", show_log=False)
+            # PaddleOCR 3.x constructor; disable optional document stages so the
+            # receipt path remains focused on text recognition.
+            ocr = PaddleOCR(lang="en", use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False)
         except TypeError:
-            ocr = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
+            try:
+                ocr = PaddleOCR(lang="en", show_log=False)
+            except TypeError:
+                ocr = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
         result = ocr.predict(str(path)) if hasattr(ocr, "predict") else ocr.ocr(str(path))
     except Exception as exc:
         raise OCRExtractionError(f"OCR failed for image {path}: {exc}") from exc

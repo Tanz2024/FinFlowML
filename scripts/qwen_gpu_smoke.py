@@ -11,7 +11,12 @@ from pathlib import Path
 
 import torch
 
-from ml.inference.predict import load_inference_model, predict_image
+from ml.inference.predict import (
+    build_quantization_config,
+    generate_prediction,
+    load_inference_model,
+)
+from ml.ocr.extract import extract_text
 
 
 def main() -> None:
@@ -27,12 +32,16 @@ def main() -> None:
     if not (adapter / "adapter_config.json").is_file():
         raise SystemExit(f"Missing adapter_config.json: {adapter}")
     started = time.monotonic()
-    loaded = load_inference_model(args.base_model, str(adapter), revision=args.revision, device_map="auto")
+    loaded = load_inference_model(args.base_model, str(adapter), revision=args.revision, device_map="auto", quantization_config=build_quantization_config())
     first_load_seconds = time.monotonic() - started
     model_is_peft = hasattr(loaded.model, "peft_config") and bool(loaded.model.peft_config)
     started = time.monotonic()
-    ocr_text, raw_output, prediction, parsing_error = predict_image(args.image, args.base_model, str(adapter), revision=args.revision)
-    print(json.dumps({"cuda": True, "adapter_path": str(adapter), "adapter_loaded": model_is_peft, "base_model": args.base_model, "revision": args.revision, "first_load_seconds": round(first_load_seconds, 3), "inference_seconds": round(time.monotonic() - started, 3), "ocr_chars": len(ocr_text), "prediction": prediction, "parsing_error": parsing_error, "raw_output": raw_output}, default=str, indent=2))
+    ocr_text = extract_text(args.image)
+    ocr_seconds = time.monotonic() - started
+    started = time.monotonic()
+    raw_output, prediction, parsing_error = generate_prediction(loaded, ocr_text)
+    generation_seconds = time.monotonic() - started
+    print(json.dumps({"cuda": True, "adapter_path": str(adapter), "adapter_loaded": model_is_peft, "base_model": args.base_model, "revision": args.revision, "first_load_seconds": round(first_load_seconds, 3), "ocr_seconds": round(ocr_seconds, 3), "generation_seconds": round(generation_seconds, 3), "ocr_chars": len(ocr_text), "prediction": prediction, "parsing_error": parsing_error, "raw_output": raw_output}, default=str, indent=2))
 
 
 if __name__ == "__main__":
