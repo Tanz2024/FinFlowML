@@ -35,3 +35,18 @@ POST /jobs/{job_id}/retry
 Configure `UPLOAD_ROOT`, `MAX_UPLOAD_BYTES`, `EXTRACTION_MAX_RETRIES`, `EXTRACTION_LEASE_SECONDS`, `MODEL_ID`, `ADAPTER_PATH`, and `WORKER_VERSION`. Install Pillow for actual image decoding. `FINFLOW_MOCK_EXTRACTION=true` is deterministic local testing only and is labeled as mock; it is not AI inference. Real Qwen inference belongs in a long-lived GPU worker process so model weights are not reloaded per document.
 
 SQLite is retained for unit tests. PostgreSQL is required for production queue concurrency and should be used for integration tests of row locking, leases, and concurrent idempotency races. The current local implementation is not a public deployment: object storage, malware scanning, distributed rate limits, worker observability, dead-letter operations, and database row-level security remain Stage 5D work.
+
+## PostgreSQL verification
+
+Use separate local `finflowml_dev` and `finflowml_test` databases. After provisioning the local `finflowml` role, run:
+
+```bash
+DATABASE_URL='postgresql+psycopg://finflowml@localhost/finflowml_dev' \
+  alembic -c backend/alembic.ini upgrade head
+DATABASE_URL='postgresql+psycopg://finflowml@localhost/finflowml_test' \
+  alembic -c backend/alembic.ini upgrade head
+FINFLOW_POSTGRES_TEST_URL='postgresql+psycopg://finflowml@localhost/finflowml_test' \
+  pytest backend/tests/test_postgres_integration.py -q
+```
+
+The integration tests use unique rows and do not drop or truncate either database. They verify distinct `FOR UPDATE SKIP LOCKED` claims and concurrent receipt approval with one expense. Migration identifiers are kept within Alembic's 32-character version-column limit.

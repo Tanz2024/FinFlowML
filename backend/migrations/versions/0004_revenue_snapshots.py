@@ -4,7 +4,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0004_revenue_snapshots"
-down_revision = "0003_invoice_items_and_accounting"
+down_revision = "0003_invoice_accounting"
 branch_labels = None
 depends_on = None
 

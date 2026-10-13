@@ -3,7 +3,7 @@
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0002_expense_intelligence_foundation"
+revision = "0002_expense_intelligence"
 down_revision = "0001_initial_schema"
 branch_labels = None
 depends_on = None

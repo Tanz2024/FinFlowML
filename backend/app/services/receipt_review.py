@@ -77,6 +77,11 @@ def store_extraction(db: Session, receipt: Receipt, *, commit: bool = True) -> R
 
 
 def approve_receipt(db: Session, receipt: Receipt, actor_id=None, organization_id=None) -> Expense:
+    organization_id = organization_id or receipt.organization_id
+    locked = db.scalar(select(Receipt).where(Receipt.id == receipt.id, Receipt.organization_id == organization_id).with_for_update())
+    if locked is None:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    receipt = locked
     if receipt.status == ReceiptStatus.APPROVED:
         existing = db.scalar(select(Expense).where(Expense.receipt_id == receipt.id, Expense.organization_id == organization_id))
         if existing is None:

@@ -3,8 +3,8 @@
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0003_invoice_items_and_accounting"
-down_revision = "0002_expense_intelligence_foundation"
+revision = "0003_invoice_accounting"
+down_revision = "0002_expense_intelligence"
 branch_labels = None
 depends_on = None
 
