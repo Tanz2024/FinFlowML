@@ -13,19 +13,30 @@ from ml.data.validate import validate_lengths
 from ml.extraction.schema import ExtractionExample, empty_targets
 
 
-def load_sroie_dataset(dataset_id: str = DATASET_ID, split: str | None = None) -> Dataset | DatasetDict:
+def load_sroie_dataset(
+    dataset_id: str = DATASET_ID,
+    split: str | None = None,
+    revision: str | None = None,
+) -> Dataset | DatasetDict:
     """Load SROIE as a DatasetDict, or only the requested source split."""
     if split is None:
-        return load_dataset(dataset_id)
+        kwargs = {"revision": revision} if revision else {}
+        return load_dataset(dataset_id, **kwargs)
     if split != "train":
-        return load_dataset(dataset_id, split=split)
+        kwargs = {"revision": revision} if revision else {}
+        return load_dataset(dataset_id, split=split, **kwargs)
+    repo_kwargs = {"revision": revision} if revision else {}
     train_shards = sorted(
-        filename for filename in list_repo_files(dataset_id, repo_type="dataset")
+        filename
+        for filename in list_repo_files(dataset_id, repo_type="dataset", **repo_kwargs)
         if filename.startswith("data/train-") and filename.endswith(".parquet")
     )
     if not train_shards:
         raise FileNotFoundError(f"no train parquet shards found in dataset repository: {dataset_id}")
-    train_files = [hf_hub_download(dataset_id, filename, repo_type="dataset") for filename in train_shards]
+    train_files = [
+        hf_hub_download(dataset_id, filename, repo_type="dataset", **repo_kwargs)
+        for filename in train_shards
+    ]
     return load_dataset("parquet", data_files=train_files, split="train")
 
 
