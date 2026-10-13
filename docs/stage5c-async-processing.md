@@ -12,6 +12,17 @@ Run the worker separately with:
 FINFLOW_MOCK_EXTRACTION=true python -m backend.worker
 ```
 
+After migrations, create a local administrator without embedding credentials in source:
+
+```bash
+export BOOTSTRAP_EMAIL='you@example.com'
+export BOOTSTRAP_PASSWORD='use-a-long-local-password'
+export BOOTSTRAP_ORGANIZATION='My local organization'
+python -m backend.bootstrap
+```
+
+Run the API and worker in separate processes. The browser demo logs in through the API and keeps the bearer token in memory only.
+
 The worker claims queued jobs transactionally, uses the receipt and organization IDs stored on the job, and persists successful extraction as raw model output followed by `needs_review`. It never creates an expense. Job states are `queued`, `processing`, `completed`, `retryable_failed`, and `terminal_failed`. Leases allow stale processing jobs to be reclaimed after a crash; retries use exponential backoff and a configurable limit.
 
 Status and retry endpoints are tenant-scoped:

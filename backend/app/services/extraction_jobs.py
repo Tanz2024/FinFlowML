@@ -4,7 +4,7 @@ import hashlib
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -27,11 +27,24 @@ def durable_upload(organization_id: UUID, filename: str, payload: bytes) -> str:
     return str(path)
 
 
-def create_job(db: Session, organization_id: UUID, receipt: Receipt, path: str, key: str) -> ExtractionJob:
+def adapter_fingerprint(path: str) -> str | None:
+    if not path or not Path(path).is_dir():
+        return None
+    digest = hashlib.sha256()
+    for item in sorted(Path(path).glob("adapter_*")):
+        if item.is_file():
+            digest.update(item.name.encode())
+            digest.update(item.read_bytes())
+    return digest.hexdigest() if digest.digest_size else None
+
+
+def create_job(db: Session, organization_id: UUID, receipt: Receipt, path: str, key: str, payload_hash: str) -> ExtractionJob:
     existing = db.scalar(select(ExtractionJob).where(ExtractionJob.organization_id == organization_id, ExtractionJob.idempotency_key == key))
     if existing:
+        if existing.payload_hash != payload_hash:
+            raise ValueError("Idempotency-Key was already used for different content") from None
         return existing
-    job = ExtractionJob(organization_id=organization_id, receipt_id=receipt.id, storage_path=path, idempotency_key=key, state=ExtractionJobState.QUEUED, worker_version=settings.worker_version)
+    job = ExtractionJob(organization_id=organization_id, receipt_id=receipt.id, storage_path=path, idempotency_key=key, payload_hash=payload_hash, state=ExtractionJobState.QUEUED, worker_version=settings.worker_version)
     db.add(job)
     try:
         db.commit()
@@ -40,6 +53,8 @@ def create_job(db: Session, organization_id: UUID, receipt: Receipt, path: str, 
         existing = db.scalar(select(ExtractionJob).where(ExtractionJob.organization_id == organization_id, ExtractionJob.idempotency_key == key))
         if existing is None:
             raise
+        if existing.payload_hash != payload_hash:
+            raise ValueError("Idempotency-Key was already used for different content") from None
         return existing
     db.refresh(job)
     return job
@@ -55,6 +70,8 @@ def claim_next(db: Session) -> ExtractionJob | None:
     if candidate is None:
         return None
     candidate.state = ExtractionJobState.PROCESSING
+    candidate.lease_owner = uuid4().hex
+    candidate.fence += 1
     candidate.lease_until = now + timedelta(seconds=settings.extraction_lease_seconds)
     candidate.updated_at = now
     db.commit()
@@ -62,13 +79,27 @@ def claim_next(db: Session) -> ExtractionJob | None:
     return candidate
 
 
-def process_job(db: Session, job_id: UUID) -> ExtractionJob:
+def process_job(db: Session, job_id: UUID, lease_owner: str | None = None, fence: int | None = None) -> ExtractionJob:
     job = db.get(ExtractionJob, job_id)
     if job is None:
         raise ValueError("job not found")
+    if job.state in {ExtractionJobState.COMPLETED, ExtractionJobState.TERMINAL_FAILED}:
+        return job
+    lease_owner = lease_owner or job.lease_owner
+    fence = fence if fence is not None else job.fence
+    if job.state != ExtractionJobState.PROCESSING or not lease_owner:
+        raise ValueError("job is not owned by a processing lease")
     receipt = db.scalar(select(Receipt).where(Receipt.id == job.receipt_id, Receipt.organization_id == job.organization_id))
     if receipt is None:
         return fail_job(db, job, "tenant_record_missing", "receipt is unavailable")
+    if receipt.status in {"approved", "rejected"}:
+        job.state = ExtractionJobState.TERMINAL_FAILED
+        job.error_code = "receipt_terminal"
+        job.error_message = "receipt was finalized before this job ran"
+        job.lease_owner = None
+        job.lease_until = None
+        db.commit()
+        return job
     try:
         if os.environ.get("FINFLOW_MOCK_EXTRACTION", "").lower() in {"1", "true", "yes"}:
             prediction = {"company": "Mock Cafe", "date": "2025-01-15", "address": "1 Demo Road", "total": "12.50", "currency": "USD"}
@@ -83,15 +114,32 @@ def process_job(db: Session, job_id: UUID) -> ExtractionJob:
         receipt.address = prediction.get("address")
         receipt.total = prediction.get("total")
         receipt.currency = prediction.get("currency")
-        store_extraction(db, receipt)
-        job.state = ExtractionJobState.COMPLETED
-        job.lease_until = None
-        job.error_code = job.error_message = None
+        updated = db.query(ExtractionJob).filter(ExtractionJob.id == job.id, ExtractionJob.state == ExtractionJobState.PROCESSING, ExtractionJob.lease_owner == lease_owner, ExtractionJob.fence == fence).update({"state": ExtractionJobState.COMPLETED, "lease_until": None, "lease_owner": None, "error_code": None, "error_message": None}, synchronize_session=False)
+        if updated != 1:
+            db.rollback()
+            return db.get(ExtractionJob, job.id)
+        store_extraction(db, receipt, commit=False)
+        job.model_id = settings.model_id
+        job.model_revision = settings.model_revision or None
+        job.adapter_fingerprint = adapter_fingerprint(settings.adapter_path)
         db.commit()
         return job
     except Exception as exc:
         db.rollback()
         return fail_job(db, job, "extraction_failed", str(exc)[:500])
+
+
+def renew_lease(db: Session, job_id: UUID, lease_owner: str, fence: int) -> bool:
+    """Extend only the currently fenced lease; stale workers cannot renew it."""
+    now = datetime.now(UTC)
+    updated = db.query(ExtractionJob).filter(
+        ExtractionJob.id == job_id,
+        ExtractionJob.state == ExtractionJobState.PROCESSING,
+        ExtractionJob.lease_owner == lease_owner,
+        ExtractionJob.fence == fence,
+    ).update({"lease_until": now + timedelta(seconds=settings.extraction_lease_seconds), "updated_at": now}, synchronize_session=False)
+    db.commit()
+    return updated == 1
 
 
 def fail_job(db: Session, job: ExtractionJob, code: str, message: str) -> ExtractionJob:
@@ -100,6 +148,7 @@ def fail_job(db: Session, job: ExtractionJob, code: str, message: str) -> Extrac
     job.state = ExtractionJobState.TERMINAL_FAILED if terminal else ExtractionJobState.RETRYABLE_FAILED
     job.error_code, job.error_message = code, message
     job.lease_until = None
+    job.lease_owner = None
     job.next_attempt_at = None if terminal else datetime.now(UTC) + timedelta(seconds=2 ** job.retry_count)
     receipt = db.get(Receipt, job.receipt_id)
     if receipt and terminal:

@@ -56,7 +56,7 @@ def transition(receipt: Receipt, target: ReceiptStatus) -> None:
     receipt.status = target.value
 
 
-def store_extraction(db: Session, receipt: Receipt) -> Receipt:
+def store_extraction(db: Session, receipt: Receipt, *, commit: bool = True) -> Receipt:
     transition(receipt, ReceiptStatus.PROCESSING)
     raw = {
         key: value.isoformat() if hasattr(value, "isoformat") else str(value) if isinstance(value, Decimal) else value
@@ -70,8 +70,9 @@ def store_extraction(db: Session, receipt: Receipt) -> Receipt:
     receipt.raw_extracted_data = raw
     receipt.validation_errors = validate_receipt_data(effective_data(receipt))
     transition(receipt, ReceiptStatus.NEEDS_REVIEW)
-    db.commit()
-    db.refresh(receipt)
+    if commit:
+        db.commit()
+        db.refresh(receipt)
     return receipt
 
 

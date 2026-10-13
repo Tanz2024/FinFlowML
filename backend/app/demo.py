@@ -1,16 +1,19 @@
 """Small isolated web demo for the Stage 5 receipt pipeline."""
 
+import hashlib
 import os
 from email.parser import BytesParser
 from email.policy import default
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.core.auth import CurrentUser, require_permission
 from backend.app.core.config import settings
 from backend.app.database.session import get_db
+from backend.app.models.extraction_job import ExtractionJob
 from backend.app.models.receipt import Receipt
 from backend.app.services.extraction_jobs import create_job, durable_upload
 
@@ -78,6 +81,12 @@ async def predict_receipt(request: Request, db: Session = Depends(get_db), actor
     filename, payload = _uploaded_file(await request.body(), content_type)
     if not idempotency_key:
         raise HTTPException(status_code=400, detail="Idempotency-Key is required")
+    payload_hash = hashlib.sha256(payload).hexdigest()
+    existing = db.scalar(select(ExtractionJob).where(ExtractionJob.organization_id == actor.organization_id, ExtractionJob.idempotency_key == idempotency_key))
+    if existing:
+        if existing.payload_hash != payload_hash:
+            raise HTTPException(status_code=409, detail="Idempotency-Key was already used for different content")
+        return {"job_id": str(existing.id), "receipt_id": str(existing.receipt_id), "state": existing.state, "mock": bool(os.environ.get("FINFLOW_MOCK_EXTRACTION"))}
     path = durable_upload(actor.organization_id, filename, payload)
     item = Receipt(
         organization_id=actor.organization_id,
@@ -86,7 +95,10 @@ async def predict_receipt(request: Request, db: Session = Depends(get_db), actor
         status="pending",
     )
     db.add(item)
-    db.commit()
-    db.refresh(item)
-    job = create_job(db, actor.organization_id, item, path, idempotency_key)
+    db.flush()
+    try:
+        job = create_job(db, actor.organization_id, item, path, idempotency_key, payload_hash)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"job_id": str(job.id), "receipt_id": str(item.id), "state": job.state, "mock": bool(os.environ.get("FINFLOW_MOCK_EXTRACTION"))}

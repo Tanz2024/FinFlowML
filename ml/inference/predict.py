@@ -2,6 +2,7 @@
 
 import argparse
 import os
+from threading import Lock
 from typing import Any
 
 import torch
@@ -12,6 +13,9 @@ from ml.extraction.prompt import build_prompt
 from ml.modeling.loader import LoadedModel, load_finflow_model
 from ml.ocr.extract import OCRExtractionError, extract_text
 
+_MODEL_CACHE: dict[tuple[str, str | None], LoadedModel] = {}
+_MODEL_CACHE_LOCK = Lock()
+
 
 def load_inference_model(
     base_model: str,
@@ -20,7 +24,19 @@ def load_inference_model(
 ) -> LoadedModel:
     """Load the base tokenizer/model, then apply the optional LoRA adapter."""
 
-    return load_finflow_model(base_model, adapter_path, **kwargs)
+    key = (str(base_model), str(adapter_path) if adapter_path is not None else None)
+    with _MODEL_CACHE_LOCK:
+        loaded = _MODEL_CACHE.get(key)
+        if loaded is None:
+            loaded = load_finflow_model(base_model, adapter_path, **kwargs)
+            _MODEL_CACHE[key] = loaded
+        return loaded
+
+
+def clear_model_cache() -> None:
+    """Release cached worker models between controlled worker rotations."""
+    with _MODEL_CACHE_LOCK:
+        _MODEL_CACHE.clear()
 
 
 def predict(

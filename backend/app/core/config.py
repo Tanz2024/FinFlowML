@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     extraction_lease_seconds: int = 300
     worker_version: str = "stage5c-local-1"
     model_id: str = "Qwen/Qwen3-4B-Instruct-2507"
+    model_revision: str = ""
     adapter_path: str = ""
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
