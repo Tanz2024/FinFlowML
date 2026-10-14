@@ -27,6 +27,25 @@ test("scanner UI uploads, completes mock extraction and saves a review correctio
   await page.getByRole("button", { name: "Save corrections" }).click();
   await expect(page.getByText("Corrections saved")).toBeVisible();
   await expect(company).toHaveValue("UI Corrected Cafe");
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: "Approve expense" }).click();
+  await expect(page.getByText("Approved and expense created")).toBeVisible();
+});
+
+test("receipt review UI rejects a receipt without creating an expense", async ({ page }) => {
+  await login(page);
+  await page.goto("/scan");
+  const filename = `ui-reject-${Date.now()}.png`;
+  await page.locator('input[type="file"]').setInputFiles({ name: filename, mimeType: "image/png", buffer: png });
+  await page.getByRole("button", { name: "Start extraction" }).click();
+  await expect(page).toHaveURL(/\/review\//, { timeout: 20_000 });
+  const receiptId = page.url().split("/").pop() as string;
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: "Reject" }).click();
+  await expect(page.getByText("Receipt rejected")).toBeVisible();
+  const expenses = await page.request.get("/api/expenses?search=Mock%20Cafe");
+  const rows = await expenses.json();
+  expect(rows.some((item: { receipt_id: string }) => item.receipt_id === receiptId)).toBeFalsy();
 });
 
 test("financial forms create a customer, invoice and payment through the UI", async ({ page }) => {
