@@ -16,6 +16,7 @@ export AUTH_SECRET="${AUTH_SECRET:-local-acceptance-secret-change-me-32chars}"
 cd "$ROOT/backend"
 "$ROOT/.venv/bin/alembic" upgrade head
 cd "$ROOT"
+PYTHONPATH="$ROOT" "$ROOT/.venv/bin/python" scripts/seed_acceptance.py
 "$ROOT/.venv/bin/pytest" -q backend/tests/test_postgres_integration.py
 "$ROOT/.venv/bin/ruff" check .
 cd "$ROOT/frontend"
@@ -24,4 +25,8 @@ npm run typecheck
 npm run lint
 npm test
 npm run build
+if [[ "${RUN_BROWSER:-0}" == "1" ]]; then
+  npx playwright install chromium
+  npx playwright test
+fi
 echo "Acceptance preparation checks passed. Start API, worker and frontend before browser tests."
