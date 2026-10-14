@@ -45,6 +45,7 @@ services:
     deploy: {resources: {limits: {cpus: "2.0", memory: 1G}}}
 
   worker:
+    profiles: [mock]
     build: .
     environment: *app-env
     command: ["python", "-m", "backend.worker"]
@@ -54,22 +55,8 @@ services:
     networks: [private]
     deploy: {resources: {limits: {cpus: "2.0", memory: 2G}}}
 
-  gpu-worker:
-    profiles: [gpu]
-    build: {context: ., dockerfile: Dockerfile.gpu}
-    environment: *app-env
-    command: ["python", "-m", "backend.worker"]
-    depends_on: {migrations: {condition: service_completed_successfully}}
-    volumes:
-      - receipt_uploads:/data/uploads
-      - ${ADAPTER_PATH:?set ADAPTER_PATH for gpu profile}:/models/adapter:ro
-      - hf_cache:/models/hf
-    restart: unless-stopped
-    networks: [private]
-
 volumes:
   postgres_data:
   receipt_uploads:
-  hf_cache:
 networks:
   private: {internal: true}

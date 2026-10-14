@@ -20,8 +20,8 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def require_secure_non_local_secret(self):
         insecure = {"", "local-development-only-change-me", "replace-with-at-least-32-random-characters"}
-        if self.environment not in {"local", "test", "mock"} and (self.auth_secret in insecure or len(self.auth_secret) < 32):
-            raise ValueError("AUTH_SECRET must be a random value of at least 32 characters outside local/test/mock")
+        if self.environment not in {"local", "test"} and (self.auth_secret in insecure or len(self.auth_secret) < 32):
+            raise ValueError("AUTH_SECRET must be a random value of at least 32 characters outside local/test")
         return self
 
 

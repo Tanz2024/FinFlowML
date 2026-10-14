@@ -21,7 +21,7 @@ Build and start the one-shot migration, API, and worker:
 docker compose build
 docker compose up -d db
 docker compose run --rm migrations
-docker compose up -d api worker
+docker compose --profile mock up -d api worker
 docker compose ps
 ./scripts/container_smoke.sh
 ```
@@ -32,8 +32,14 @@ Compose network. Migrations are explicit and API/worker do not run them.
 The GPU profile requires an external adapter path and compatible NVIDIA runtime:
 
 ```bash
-ADAPTER_PATH=/private/path/to/best_adapter docker compose --profile gpu up -d gpu-worker
+ADAPTER_PATH=/private/path/to/best_adapter docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile gpu up -d gpu-worker
 ```
+
+The GPU host must have the NVIDIA driver, NVIDIA Container Toolkit, and a
+Docker runtime that supports `gpus: all`. Preload the pinned Hugging Face model
+under the `hf_cache` volume or allow the worker's controlled Hugging Face
+download through the configured network policy. CPU/mock and GPU profiles are
+mutually exclusive worker choices for a staging database.
 
 ## Teardown and backup
 

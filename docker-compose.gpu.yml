@@ -1,0 +1,30 @@
+services:
+  gpu-worker:
+    profiles: [gpu]
+    build: {context: ., dockerfile: Dockerfile.gpu}
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-finflowml}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-finflowml}
+      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env}
+      ENVIRONMENT: ${ENVIRONMENT:-staging}
+      UPLOAD_ROOT: /data/uploads
+      FINFLOW_MOCK_EXTRACTION: "false"
+      ADAPTER_PATH: /models/adapter
+      MODEL_ID: Qwen/Qwen3-4B-Instruct-2507
+      MODEL_REVISION: cdbee75f17c01a7cc42f958dc650907174af0554
+      HF_HOME: /models/hf
+      TRANSFORMERS_CACHE: /models/hf
+    command: ["python", "-m", "backend.worker"]
+    depends_on: {migrations: {condition: service_completed_successfully}}
+    volumes:
+      - receipt_uploads:/data/uploads
+      - ${ADAPTER_PATH:?set ADAPTER_PATH for gpu profile}:/models/adapter:ro
+      - hf_cache:/models/hf
+    restart: unless-stopped
+    networks: [private]
+    gpus: all
+
+volumes:
+  receipt_uploads:
+  hf_cache:
+networks:
+  private: {name: finflowml_private}
