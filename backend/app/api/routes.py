@@ -228,7 +228,7 @@ def expense_summary(db: Session = Depends(get_db), actor: CurrentUser = Depends(
         monthly[month] += expense.amount
         monthly_by_currency[expense.currency][month] += expense.amount
     return ExpenseSummary(
-        total_spending=next(iter(by_currency.values()), 0) if len(by_currency) == 1 else 0,
+        total_spending=0 if not by_currency else next(iter(by_currency.values())) if len(by_currency) == 1 else None,
         spending_by_category=dict(by_category) if len(by_currency) <= 1 else {},
         monthly_totals=dict(monthly) if len(by_currency) <= 1 else {},
         currency_totals=dict(by_currency),
@@ -297,9 +297,9 @@ def list_payments(db: Session = Depends(get_db), actor: CurrentUser = Depends(re
 
 @router.post("/payments", response_model=PaymentRead, status_code=status.HTTP_201_CREATED)
 def create_payment(payload: PaymentCreate, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("accounting"))):
-    if db.scalar(select(Invoice).where(Invoice.id == payload.invoice_id, Invoice.organization_id == actor.organization_id)) is None:
+    invoice = db.scalar(select(Invoice).where(Invoice.id == payload.invoice_id, Invoice.organization_id == actor.organization_id).with_for_update())
+    if invoice is None:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    invoice = db.scalar(select(Invoice).where(Invoice.id == payload.invoice_id, Invoice.organization_id == actor.organization_id))
     paid = sum((payment.amount_paid for payment in invoice.payments), start=0)
     if payload.amount_paid <= 0 or paid + payload.amount_paid > invoice.total:
         raise HTTPException(status_code=422, detail="payment exceeds the invoice balance or is not positive")

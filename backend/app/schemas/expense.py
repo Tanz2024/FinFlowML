@@ -80,7 +80,7 @@ class ExpenseCategoryRead(BaseModel):
 
 
 class ExpenseSummary(BaseModel):
-    total_spending: Decimal
+    total_spending: Decimal | None
     spending_by_category: dict[str, Decimal]
     monthly_totals: dict[str, Decimal]
     currency_totals: dict[str, Decimal] = Field(default_factory=dict)
