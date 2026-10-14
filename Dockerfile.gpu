@@ -10,7 +10,9 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu12
     --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ paddlepaddle-gpu==3.2.2
 COPY backend /app/backend
 COPY ml /app/ml
+COPY scripts /app/scripts
 RUN mkdir -p /data/uploads /models && chown -R finflow:finflow /app /data /models
+RUN chmod 755 /app/scripts/gpu_worker_entrypoint.sh /app/scripts/validate_gpu_runtime.py
 USER finflow
-RUN python -c "import torch, paddle, paddleocr, bitsandbytes, transformers, peft; assert torch.cuda.is_available()"
+ENTRYPOINT ["/app/scripts/gpu_worker_entrypoint.sh"]
 CMD ["python", "-m", "backend.worker"]
