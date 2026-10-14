@@ -1,6 +1,9 @@
 def test_demo_page(client):
     response = client.get("/demo")
     assert response.status_code == 200
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
     assert "Extract Receipt Data" in response.text
     assert "Save Corrections" in response.text
     assert "Original model" in response.text
