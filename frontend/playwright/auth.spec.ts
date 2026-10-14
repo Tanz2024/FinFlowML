@@ -16,7 +16,7 @@ test("login, protected dashboard and logout", async ({ page, context }) => {
     await expect(signOut).toBeVisible();
     await expect(signOut).toBeEnabled();
     const response = await Promise.all([page.waitForResponse((r) => r.url().endsWith("/api/auth/logout") && r.request().method() === "POST"), signOut.click()]);
-    expect(response[0].status()).toBe(200);
+    expect(response[0].status()).toBe(303);
   });
   await test.step("cookie and session are invalidated", async () => {
     expect((await context.cookies()).some((cookie) => cookie.name === "finflow_token" && cookie.value)).toBe(false);
