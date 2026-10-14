@@ -28,6 +28,7 @@ from backend.app.schemas.expense import (
     ReceiptCorrection,
     ReceiptCreate,
     ReceiptRead,
+    ReceiptReviewRead,
     ReceiptStatusRead,
 )
 from backend.app.schemas.invoice import InvoiceCreate, InvoiceRead
@@ -40,6 +41,7 @@ from backend.app.services.receipt_review import (
     approve_receipt,
     effective_data,
     reject_receipt,
+    review_data,
     store_extraction,
     validate_receipt_data,
 )
@@ -137,6 +139,11 @@ def receipt_status(receipt_id: UUID, db: Session = Depends(get_db), actor: Curre
     item = _owned(db, Receipt, receipt_id, actor)
     expense = db.scalar(select(Expense).where(Expense.receipt_id == item.id, Expense.organization_id == actor.organization_id))
     return ReceiptStatusRead(id=item.id, status=item.status, validation_errors=item.validation_errors, effective_data=effective_data(item), expense_id=expense.id if expense else None)
+
+
+@router.get("/receipts/{receipt_id}/review", response_model=ReceiptReviewRead)
+def receipt_review_details(receipt_id: UUID, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("read"))):
+    return review_data(_owned(db, Receipt, receipt_id, actor))
 
 
 @router.patch("/receipts/{receipt_id}/corrections", response_model=ReceiptRead)

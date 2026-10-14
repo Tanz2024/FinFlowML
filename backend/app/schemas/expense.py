@@ -39,6 +39,22 @@ class ReceiptStatusRead(BaseModel):
     expense_id: UUID | None = None
 
 
+class ReviewFieldRead(BaseModel):
+    original_model_value: str | None = None
+    normalized_value: str | None = None
+    reviewer_corrected_value: str | None = None
+    effective_value: str | None = None
+    status: str
+    errors: list[str] = Field(default_factory=list)
+
+
+class ReceiptReviewRead(BaseModel):
+    receipt_id: UUID
+    status: str
+    fields: dict[str, ReviewFieldRead]
+    validation_errors: list[str] = Field(default_factory=list)
+
+
 class ExpenseCreate(BaseModel):
     receipt_id: UUID
     category_id: UUID | None = None

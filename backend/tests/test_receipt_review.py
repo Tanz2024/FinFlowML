@@ -55,6 +55,30 @@ def test_invalid_values_block_approval(client):
     assert approval.status_code == 422
 
 
+def test_review_projection_exposes_each_value_and_field_errors(client):
+    receipt = create_review_receipt(client)
+    review = client.get(f"/receipts/{receipt['id']}/review")
+    assert review.status_code == 200
+    body = review.json()
+    assert body["fields"]["receipt_date"]["original_model_value"] == "2025-01-01"
+    assert body["fields"]["receipt_date"]["normalized_value"] == "2025-01-01"
+    assert body["fields"]["receipt_date"]["effective_value"] == "2025-01-01"
+    assert body["fields"]["receipt_date"]["status"] == "valid"
+
+    correction = client.patch(
+        f"/receipts/{receipt['id']}/corrections",
+        json={"corrections": {"receipt_date": "not-a-date"}},
+    )
+    assert correction.status_code == 200
+    corrected = client.get(f"/receipts/{receipt['id']}/review").json()
+    field = corrected["fields"]["receipt_date"]
+    assert field["reviewer_corrected_value"] == "not-a-date"
+    assert field["effective_value"] == "not-a-date"
+    assert field["status"] == "invalid"
+    assert "receipt_date must be an ISO date" in field["errors"]
+    assert client.post(f"/receipts/{receipt['id']}/approve").status_code == 422
+
+
 def test_rejection_is_terminal_and_does_not_create_expense(client, client_db):
     receipt = create_review_receipt(client)
     rejected = client.post(f"/receipts/{receipt['id']}/reject")

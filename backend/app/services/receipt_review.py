@@ -61,11 +61,14 @@ def transition(receipt: Receipt, target: ReceiptStatus) -> None:
 
 def store_extraction(db: Session, receipt: Receipt, *, commit: bool = True) -> Receipt:
     transition(receipt, ReceiptStatus.PROCESSING)
-    raw = dict(receipt.raw_extracted_data or {}) or {
-        key: value.isoformat() if hasattr(value, "isoformat") else str(value) if isinstance(value, Decimal) else value
-        for key, value in (receipt.extracted_data or {}).items()
-    }
-    raw.update({field: getattr(receipt, field) for field in FIELDS if getattr(receipt, field) is not None})
+    if receipt.raw_extracted_data is not None:
+        raw = dict(receipt.raw_extracted_data)
+    else:
+        raw = {
+            key: value.isoformat() if hasattr(value, "isoformat") else str(value) if isinstance(value, Decimal) else value
+            for key, value in (receipt.extracted_data or {}).items()
+        }
+        raw.update({field: getattr(receipt, field) for field in FIELDS if getattr(receipt, field) is not None})
     raw = {
         key: value.isoformat() if hasattr(value, "isoformat") else str(value) if isinstance(value, Decimal) else value
         for key, value in raw.items()
@@ -77,6 +80,40 @@ def store_extraction(db: Session, receipt: Receipt, *, commit: bool = True) -> R
         db.commit()
         db.refresh(receipt)
     return receipt
+
+
+def review_data(receipt: Receipt) -> dict:
+    """Return an audit-friendly, field-level review projection."""
+    effective = effective_data(receipt)
+    raw = receipt.raw_extracted_data or {}
+    corrected = receipt.corrected_data or {}
+    field_details = {}
+    for field in FIELDS:
+        model_key = "date" if field == "receipt_date" else field
+        original = raw.get(model_key)
+        normalized = (receipt.extracted_data or {}).get(model_key)
+        if normalized is None and model_key != field:
+            normalized = (receipt.extracted_data or {}).get(field)
+        corrected_value = corrected.get(field)
+        value = effective.get(field)
+        field_errors = [error for error in validate_receipt_data({field: value}).copy() if error.startswith(field)]
+        if value is None or not str(value).strip():
+            state = "missing"
+        elif field_errors:
+            state = "invalid"
+        elif corrected_value is not None:
+            state = "corrected"
+        else:
+            state = "valid"
+        field_details[field] = {
+            "original_model_value": original,
+            "normalized_value": normalized,
+            "reviewer_corrected_value": corrected_value,
+            "effective_value": value,
+            "status": state,
+            "errors": field_errors,
+        }
+    return {"receipt_id": receipt.id, "status": receipt.status, "fields": field_details, "validation_errors": receipt.validation_errors or []}
 
 
 def approve_receipt(db: Session, receipt: Receipt, actor_id=None, organization_id=None) -> Expense:
