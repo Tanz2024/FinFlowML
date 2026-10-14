@@ -83,3 +83,5 @@ class ExpenseSummary(BaseModel):
     total_spending: Decimal
     spending_by_category: dict[str, Decimal]
     monthly_totals: dict[str, Decimal]
+    currency_totals: dict[str, Decimal] = Field(default_factory=dict)
+    spending_by_currency_and_category: dict[str, dict[str, Decimal]] = Field(default_factory=dict)

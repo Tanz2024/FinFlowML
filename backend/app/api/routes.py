@@ -1,7 +1,7 @@
 from collections import defaultdict
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -106,6 +106,11 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     )
 
 
+@router.get("/auth/me")
+def auth_me(actor: CurrentUser = Depends(require_permission("read"))):
+    return {"user_id": actor.user.id, "email": actor.user.email, "organization_id": actor.organization_id, "role": actor.membership.role}
+
+
 def _owned(db: Session, model, record_id: UUID, actor: CurrentUser):
     item = db.scalar(select(model).where(model.id == record_id, model.organization_id == actor.organization_id))
     if item is None:
@@ -195,21 +200,37 @@ def list_expense_categories(db: Session = Depends(get_db), actor: CurrentUser = 
     return db.scalars(select(ExpenseCategory).where(ExpenseCategory.organization_id == actor.organization_id).order_by(ExpenseCategory.name)).all()
 
 
+@router.get("/expenses", response_model=list[ExpenseRead])
+def list_expenses(search: str | None = None, currency: str | None = Query(default=None, min_length=3, max_length=3), limit: int = Query(default=50, ge=1, le=200), offset: int = Query(default=0, ge=0), db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("read"))):
+    query = select(Expense).where(Expense.organization_id == actor.organization_id).order_by(Expense.expense_date.desc(), Expense.created_at.desc()).offset(offset).limit(limit)
+    if currency: query = query.where(Expense.currency == currency.upper())
+    if search: query = query.where(Expense.merchant_name.ilike(f"%{search[:100]}%"))
+    return db.scalars(query).all()
+
+
 @router.get("/expenses/summary", response_model=ExpenseSummary)
 def expense_summary(db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("read"))):
     expenses = db.scalars(select(Expense).where(Expense.organization_id == actor.organization_id).order_by(Expense.expense_date, Expense.created_at)).all()
     categories = {category.id: category.name for category in db.scalars(select(ExpenseCategory).where(ExpenseCategory.organization_id == actor.organization_id)).all()}
-    total = sum((expense.amount for expense in expenses), start=0)
+    # Preserve the legacy field for single-currency tenants. A mixed-currency
+    # amount is deliberately not presented as a mathematically meaningful sum.
     by_category: defaultdict[str, object] = defaultdict(lambda: 0)
     monthly: defaultdict[str, object] = defaultdict(lambda: 0)
+    by_currency: defaultdict[str, object] = defaultdict(lambda: 0)
+    by_currency_category: defaultdict[str, defaultdict[str, object]] = defaultdict(lambda: defaultdict(lambda: 0))
     for expense in expenses:
-        by_category[categories.get(expense.category_id, "Uncategorized")] += expense.amount
+        category = categories.get(expense.category_id, "Uncategorized")
+        by_category[category] += expense.amount
+        by_currency[expense.currency] += expense.amount
+        by_currency_category[expense.currency][category] += expense.amount
         month = expense.expense_date.strftime("%Y-%m") if expense.expense_date else "unknown"
         monthly[month] += expense.amount
     return ExpenseSummary(
-        total_spending=total,
+        total_spending=next(iter(by_currency.values()), 0) if len(by_currency) == 1 else 0,
         spending_by_category=dict(by_category),
         monthly_totals=dict(monthly),
+        currency_totals=dict(by_currency),
+        spending_by_currency_and_category={currency: dict(values) for currency, values in by_currency_category.items()},
     )
 
 

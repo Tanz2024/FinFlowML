@@ -18,7 +18,7 @@ export default function ReviewPage() {
     try { setLoading(true); const d = await api<Review>(`/receipts/${id}/review`); setData(d); setValues(Object.fromEntries(REVIEW_FIELDS.map((f) => [f, d.fields[f]?.reviewer_corrected_value ?? d.fields[f]?.effective_value ?? ""])) as Record<ReviewField, string>); setError(""); }
     catch (e) { setError(e instanceof Error ? e.message : "Could not load review"); } finally { setLoading(false); }
   }
-  useEffect(() => { setRole(document.cookie.match(/(?:^|; )finflow_role=([^;]+)/)?.[1] ?? ""); void load(); }, [id]);
+  useEffect(() => { fetch("/api/auth/me").then((r) => r.ok ? r.json() : Promise.reject()).then((me) => setRole(me.role)).catch(() => setRole("")); void load(); }, [id]);
   if (loading) return <Shell><p>Loading review…</p></Shell>;
   if (!data) return <Shell><p className="text-red-700">{error || "Review unavailable"}</p></Shell>;
   const original = Object.fromEntries(REVIEW_FIELDS.map((f) => [f, data.fields[f]?.reviewer_corrected_value ?? data.fields[f]?.effective_value ?? ""])) as Record<ReviewField, string>;

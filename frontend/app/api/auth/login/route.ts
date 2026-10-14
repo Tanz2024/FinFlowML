@@ -2,6 +2,8 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 const backend = process.env.BACKEND_URL ?? "http://127.0.0.1:8000";
 export async function POST(request: Request) {
+  const origin = request.headers.get("origin"); const host = request.headers.get("host");
+  if (origin && host && new URL(origin).host !== host) return NextResponse.json({ detail: "Cross-origin request rejected" }, { status: 403 });
   const response = await fetch(`${backend}/auth/login`, {method:"POST", headers:{"content-type":"application/json"}, body:await request.text()});
   const data = await response.json();
   if (!response.ok) return NextResponse.json(data, {status:response.status});
