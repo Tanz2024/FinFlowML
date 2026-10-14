@@ -1,4 +1,5 @@
 import re
+from datetime import date
 from decimal import Decimal, InvalidOperation
 
 
@@ -36,10 +37,17 @@ def normalize_date(value: str | None) -> str | None:
     if value is None:
         return None
     text = collapse_whitespace(value)
-    for pattern in (r"(\d{1,2})/(\d{1,2})/(\d{4})", r"(\d{1,2})-(\d{1,2})-(\d{4})"):
-        match = re.fullmatch(pattern, text)
+    for pattern in (
+        r"(\d{1,2})/(\d{1,2})/(\d{4})(?:(?:[ T_-]*)(?:\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AP]M)?))?",
+        r"(\d{1,2})-(\d{1,2})-(\d{4})(?:(?:[ T_-]*)(?:\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AP]M)?))?",
+    ):
+        match = re.fullmatch(pattern, text, flags=re.IGNORECASE)
         if match:
             day, month, year = map(int, match.groups())
+            try:
+                date(year, month, day)
+            except ValueError:
+                continue
             if 1 <= day <= 31 and 1 <= month <= 12:
                 return f"{year:04d}-{month:02d}-{day:02d}"
     return text.casefold()
