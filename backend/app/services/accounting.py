@@ -13,8 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.models.expense import Expense
-from backend.app.models.payment import Payment
 from backend.app.models.invoice import Invoice
+from backend.app.models.payment import Payment
 
 
 @dataclass

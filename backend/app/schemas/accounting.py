@@ -1,13 +1,13 @@
 from decimal import Decimal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AccountingSummaryRead(BaseModel):
     total_revenue: Decimal
     total_expenses: Decimal
     net_profit: Decimal
-    by_currency: dict[str, dict[str, Decimal]] = {}
+    by_currency: dict[str, dict[str, Decimal]] = Field(default_factory=dict)
 
 
 class MonthlyReportEntryRead(BaseModel):

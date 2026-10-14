@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class InvoiceItemCreate(BaseModel):
@@ -10,6 +10,13 @@ class InvoiceItemCreate(BaseModel):
     quantity: Decimal = Field(default=Decimal("1"), decimal_places=2)
     unit_price: Decimal = Field(decimal_places=2)
     amount: Decimal = Field(decimal_places=2)
+
+    @model_validator(mode="after")
+    def validate_amount(self):
+        expected = (self.quantity * self.unit_price).quantize(Decimal("0.01"))
+        if self.quantity <= 0 or self.unit_price < 0 or self.amount != expected:
+            raise ValueError("line amount must equal quantity × unit price")
+        return self
 
 
 class InvoiceItemRead(InvoiceItemCreate):
@@ -29,6 +36,20 @@ class InvoiceCreate(BaseModel):
     status: str = "unpaid"
     source_filename: str | None = None
     items: list[InvoiceItemCreate] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_totals(self):
+        if self.subtotal < 0 or self.tax < 0 or self.total < 0:
+            raise ValueError("invoice amounts cannot be negative")
+        if self.items:
+            item_total = sum((item.amount for item in self.items), start=Decimal("0.00"))
+            if item_total != self.subtotal:
+                raise ValueError("subtotal must equal the sum of line items")
+        if self.total != (self.subtotal + self.tax).quantize(Decimal("0.01")):
+            raise ValueError("total must equal subtotal plus tax")
+        if self.due_date < self.invoice_date:
+            raise ValueError("due date cannot precede invoice date")
+        return self
 
 
 class InvoiceRead(BaseModel):

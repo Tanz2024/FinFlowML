@@ -218,6 +218,7 @@ def expense_summary(db: Session = Depends(get_db), actor: CurrentUser = Depends(
     monthly: defaultdict[str, object] = defaultdict(lambda: 0)
     by_currency: defaultdict[str, object] = defaultdict(lambda: 0)
     by_currency_category: defaultdict[str, defaultdict[str, object]] = defaultdict(lambda: defaultdict(lambda: 0))
+    monthly_by_currency: defaultdict[str, defaultdict[str, object]] = defaultdict(lambda: defaultdict(lambda: 0))
     for expense in expenses:
         category = categories.get(expense.category_id, "Uncategorized")
         by_category[category] += expense.amount
@@ -225,12 +226,14 @@ def expense_summary(db: Session = Depends(get_db), actor: CurrentUser = Depends(
         by_currency_category[expense.currency][category] += expense.amount
         month = expense.expense_date.strftime("%Y-%m") if expense.expense_date else "unknown"
         monthly[month] += expense.amount
+        monthly_by_currency[expense.currency][month] += expense.amount
     return ExpenseSummary(
         total_spending=next(iter(by_currency.values()), 0) if len(by_currency) == 1 else 0,
-        spending_by_category=dict(by_category),
-        monthly_totals=dict(monthly),
+        spending_by_category=dict(by_category) if len(by_currency) <= 1 else {},
+        monthly_totals=dict(monthly) if len(by_currency) <= 1 else {},
         currency_totals=dict(by_currency),
         spending_by_currency_and_category={currency: dict(values) for currency, values in by_currency_category.items()},
+        monthly_totals_by_currency={currency: dict(values) for currency, values in monthly_by_currency.items()},
     )
 
 
