@@ -15,9 +15,12 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
+from backend.app.models.customer import Customer
 from backend.app.models.expense import Expense
 from backend.app.models.extraction_job import ExtractionJob
+from backend.app.models.invoice import Invoice
 from backend.app.models.organization import Organization
+from backend.app.models.payment import Payment
 from backend.app.models.receipt import Receipt
 from backend.app.services.extraction_jobs import claim_next
 from backend.app.services.receipt_review import approve_receipt
@@ -78,3 +81,43 @@ def test_postgres_approval_is_exactly_once(pg_session_factory):
     with pg_session_factory() as db:
         assert db.scalar(select(Receipt).where(Receipt.id == receipt_id)).status == "approved"
         assert len(db.scalars(select(Expense).where(Expense.receipt_id == receipt_id)).all()) == 1
+
+
+def test_postgres_payments_lock_invoice_balance(pg_session_factory):
+    """Two independent transactions may not commit payments beyond one invoice."""
+    with pg_session_factory.begin() as db:
+        org = Organization(name=f"payments-{uuid4()}")
+        other = Organization(name=f"other-{uuid4()}")
+        db.add_all([org, other])
+        db.flush()
+        customer = Customer(organization_id=org.id, name="Acceptance customer")
+        db.add(customer)
+        db.flush()
+        invoice = Invoice(organization_id=org.id, customer_id=customer.id, invoice_number=f"pg-{uuid4()}", invoice_date=date(2025, 1, 1), due_date=date(2025, 2, 1), subtotal=Decimal("100.00"), tax=Decimal("0.00"), total=Decimal("100.00"), currency="USD")
+        db.add(invoice)
+        db.flush()
+        invoice_id, org_id, other_id = invoice.id, org.id, other.id
+
+    def pay(amount, organization_id):
+        with pg_session_factory() as db:
+            locked = db.scalar(select(Invoice).where(Invoice.id == invoice_id, Invoice.organization_id == organization_id).with_for_update())
+            if locked is None:
+                db.rollback()
+                return False
+            paid = sum((item.amount_paid for item in locked.payments), start=Decimal("0.00"))
+            if amount <= 0 or paid + amount > locked.total:
+                db.rollback()
+                return False
+            db.add(Payment(organization_id=organization_id, invoice_id=locked.id, payment_date=date(2025, 1, 2), amount_paid=amount))
+            db.commit()
+            return True
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda value: pay(value, org_id), [Decimal("60.00"), Decimal("60.00")]))
+    assert sorted(results) == [False, True]
+    assert pay(Decimal("40.00"), org_id) is True
+    assert pay(Decimal("1.00"), org_id) is False
+    assert pay(Decimal("1.00"), other_id) is False
+    with pg_session_factory() as db:
+        assert db.scalar(select(Payment).where(Payment.invoice_id == invoice_id).with_for_update().execution_options(populate_existing=True)) is not None
+        assert sum((item.amount_paid for item in db.scalars(select(Payment).where(Payment.invoice_id == invoice_id)).all()), start=Decimal("0.00")) == Decimal("100.00")
