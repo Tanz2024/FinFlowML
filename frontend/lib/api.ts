@@ -3,5 +3,5 @@ export type Summary={total_spending:string|number;spending_by_category:Record<st
 export type Expense={id:string;receipt_id:string;merchant_name:string|null;expense_date:string|null;amount:string|number;currency:string;notes:string|null;created_at:string};
 export type Customer={id:string;name:string;created_at:string};
 export type Invoice={id:string;customer_id:string;invoice_number:string;invoice_date:string;due_date:string;subtotal:string|number;tax:string|number;total:string|number;currency:string;status:string;source_filename:string|null;created_at:string};
-export type Payment={id:string;invoice_id:string;payment_date:string;amount_paid:string|number;created_at:string};
+export type Payment={id:string;invoice_id:string;payment_date:string;amount_paid:string|number;currency:string|null;created_at:string};
 export type Review={receipt_id:string;status:string;fields:Record<string,{original_model_value:string|null;normalized_value:string|null;reviewer_corrected_value:string|null;effective_value:string|null;status:string;errors:string[]}>;validation_errors:string[]};

@@ -7,6 +7,7 @@ class AccountingSummaryRead(BaseModel):
     total_revenue: Decimal
     total_expenses: Decimal
     net_profit: Decimal
+    by_currency: dict[str, dict[str, Decimal]] = {}
 
 
 class MonthlyReportEntryRead(BaseModel):
@@ -14,3 +15,4 @@ class MonthlyReportEntryRead(BaseModel):
     revenue: Decimal
     expenses: Decimal
     profit: Decimal
+    currency: str | None = None

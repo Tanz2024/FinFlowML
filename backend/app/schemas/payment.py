@@ -15,3 +15,4 @@ class PaymentRead(PaymentCreate):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     created_at: datetime
+    currency: str | None = None

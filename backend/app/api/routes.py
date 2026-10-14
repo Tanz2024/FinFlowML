@@ -288,15 +288,20 @@ def assistant_context(q: str, db: Session = Depends(get_db), actor: CurrentUser 
 
 @router.get("/payments", response_model=list[PaymentRead])
 def list_payments(db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("read"))):
-    return db.scalars(select(Payment).where(Payment.organization_id == actor.organization_id)).all()
+    payments = db.scalars(select(Payment).where(Payment.organization_id == actor.organization_id)).all()
+    return [{**payment.__dict__, "currency": payment.invoice.currency} for payment in payments]
 
 
 @router.post("/payments", response_model=PaymentRead, status_code=status.HTTP_201_CREATED)
 def create_payment(payload: PaymentCreate, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("accounting"))):
     if db.scalar(select(Invoice).where(Invoice.id == payload.invoice_id, Invoice.organization_id == actor.organization_id)) is None:
         raise HTTPException(status_code=404, detail="Invoice not found")
+    invoice = db.scalar(select(Invoice).where(Invoice.id == payload.invoice_id, Invoice.organization_id == actor.organization_id))
+    paid = sum((payment.amount_paid for payment in invoice.payments), start=0)
+    if payload.amount_paid <= 0 or paid + payload.amount_paid > invoice.total:
+        raise HTTPException(status_code=422, detail="payment exceeds the invoice balance or is not positive")
     item = Payment(organization_id=actor.organization_id, **payload.model_dump())
     db.add(item)
     db.commit()
     db.refresh(item)
-    return item
+    return {**item.__dict__, "currency": invoice.currency}
