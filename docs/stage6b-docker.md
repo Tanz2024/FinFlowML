@@ -41,6 +41,12 @@ under the `hf_cache` volume or allow the worker's controlled Hugging Face
 download through the configured network policy. CPU/mock and GPU profiles are
 mutually exclusive worker choices for a staging database.
 
+The GPU image uses Python 3.11, CUDA 12.4 PyTorch wheels, and the official
+PaddlePaddle CUDA 12.6 package index. Run `scripts/validate_gpu_runtime.py`
+inside a built GPU container on a compatible NVIDIA host before starting the
+worker. The real worker sets `FINFLOW_MOCK_EXTRACTION=false` and rejects mock
+mode in non-local environments.
+
 ## Teardown and backup
 
 ```bash

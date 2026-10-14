@@ -6,9 +6,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
 COPY requirements-training.txt requirements.txt /app/
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu124 torch==2.6.0 \
     && pip install --no-cache-dir -r requirements.txt -r requirements-training.txt \
-    paddleocr==3.3.2 paddlepaddle-gpu==3.2.2
+    paddleocr==3.3.2 \
+    --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ paddlepaddle-gpu==3.2.2
 COPY backend /app/backend
 COPY ml /app/ml
 RUN mkdir -p /data/uploads /models && chown -R finflow:finflow /app /data /models
 USER finflow
+RUN python -c "import torch, paddle, paddleocr, bitsandbytes, transformers, peft; assert torch.cuda.is_available()"
 CMD ["python", "-m", "backend.worker"]

@@ -13,6 +13,11 @@ def test_demo_page(client):
     assert "URL.revokeObjectURL(imageUrl)" in response.text
 
 
+def test_health_and_readiness_are_available(client):
+    assert client.get("/health").json() == {"status": "ok"}
+    assert client.get("/ready").json() == {"status": "ready"}
+
+
 def test_predict_upload_uses_stage5_pipeline(client, monkeypatch):
     import backend.app.demo as demo
 
