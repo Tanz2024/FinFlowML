@@ -1,7 +1,9 @@
 """Idempotently seed disposable browser accounts for the acceptance database."""
 import os
+
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
+
 from backend.app.core.auth import hash_password
 from backend.app.models.organization import Membership, Organization, User
 
