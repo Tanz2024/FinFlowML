@@ -5,6 +5,9 @@ def test_demo_page(client):
     assert "Save Corrections" in response.text
     assert "Original model" in response.text
     assert "Approve and create expense" in response.text
+    assert "const all=corrections(),changed={}" in response.text
+    assert "Save corrections before approving." in response.text
+    assert "URL.revokeObjectURL(imageUrl)" in response.text
 
 
 def test_predict_upload_uses_stage5_pipeline(client, monkeypatch):
