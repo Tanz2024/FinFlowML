@@ -97,3 +97,11 @@ volumes, and optional external-adapter GPU worker are documented in
 [docs/stage6b-docker.md](docs/stage6b-docker.md). It binds the API to localhost
 by default and never copies model weights, adapters, receipts, `.env` files, or
 credentials into images.
+
+## Stage 6E.1 SaaS frontend
+
+The working Next.js frontend is in [`frontend/`](frontend/) and its local setup,
+session model, API integration and validation commands are documented in
+[`docs/stage6e1-frontend.md`](docs/stage6e1-frontend.md). It is intended for
+local development against the existing FastAPI API and clearly labelled mock
+worker; it is not a production deployment claim.

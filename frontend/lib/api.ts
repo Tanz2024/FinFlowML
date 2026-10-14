@@ -1,0 +1,3 @@
+export async function api<T>(path:string,init?:RequestInit):Promise<T>{const r=await fetch(`/api${path}`,{...init,cache:"no-store"});const data=await r.json().catch(()=>({}));if(r.status===401){window.location.href="/login";throw new Error("Session expired")};if(!r.ok)throw new Error(typeof data.detail==="string"?data.detail:"Request failed");return data as T}
+export type Summary={total_spending:string|number;spending_by_category:Record<string,string|number>;monthly_totals:Record<string,string|number>};
+export type Review={receipt_id:string;status:string;fields:Record<string,{original_model_value:string|null;normalized_value:string|null;reviewer_corrected_value:string|null;effective_value:string|null;status:string;errors:string[]}>;validation_errors:string[]};
