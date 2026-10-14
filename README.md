@@ -89,3 +89,11 @@ Stage 5B adds authenticated, organization-scoped receipt review and accounting A
 Stage 5C adds durable asynchronous receipt jobs. See [docs/stage5c-async-processing.md](docs/stage5c-async-processing.md).
 
 Stage 5D.1 adds audit events and job observability. See [docs/stage5d1-audit-observability.md](docs/stage5d1-audit-observability.md).
+
+## Stage 6B private Docker staging
+
+The CPU/mock Compose stack, explicit migrations, persistent Postgres/upload
+volumes, and optional external-adapter GPU worker are documented in
+[docs/stage6b-docker.md](docs/stage6b-docker.md). It binds the API to localhost
+by default and never copies model weights, adapters, receipts, `.env` files, or
+credentials into images.

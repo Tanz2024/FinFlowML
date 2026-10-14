@@ -19,3 +19,8 @@ app = FastAPI(title="FinFlowML API", version="0.1.0")
 app.add_middleware(SecurityHeadersMiddleware)
 app.include_router(router)
 app.include_router(demo_router)
+
+
+@app.get("/health", include_in_schema=False)
+def health() -> dict[str, str]:
+    return {"status": "ok"}
