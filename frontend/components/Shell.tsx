@@ -9,7 +9,7 @@ const links = [{ href: "/dashboard", label: "Dashboard" }, { href: "/expenses", 
 export default function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname(); const router = useRouter(); const [role, setRole] = useState(""); const [open, setOpen] = useState(false);
   useEffect(() => { fetch("/api/auth/me").then((r) => r.ok ? r.json() : Promise.reject()).then((me) => setRole(me.role)).catch(() => router.push("/login")); }, [router]);
-  async function logout() { await fetch("/api/auth/logout", { method: "POST" }); router.push("/login"); }
+  async function logout() { try { const response = await fetch("/api/auth/logout", { method: "POST", headers: { "content-type": "application/json" }, cache: "no-store" }); if (!response.ok) throw new Error("Logout failed"); setRole(""); router.replace("/login"); } catch { router.replace("/login?error=logout"); } }
   const canScan = role === "admin" || role === "reviewer"; const canAccounting = role === "admin" || role === "accountant";
   const visible = links.filter((link) => link.href !== "/expenses" || true).filter((link) => link.href !== "/invoices" || canAccounting || role === "viewer").filter((link) => link.href !== "/customers" || canAccounting || role === "viewer").filter((link) => link.href !== "/payments" || canAccounting || role === "viewer");
   const nav = <nav className="space-y-1">{visible.map((link) => <Link key={link.href} onClick={() => setOpen(false)} className={path === link.href ? "active" : ""} href={link.href}>{link.label}</Link>)}{canScan && <Link onClick={() => setOpen(false)} className={path === "/scan" ? "active" : ""} href="/scan">Scan receipt</Link>}</nav>;
