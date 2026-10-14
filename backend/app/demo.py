@@ -4,9 +4,11 @@ import hashlib
 import os
 from email.parser import BytesParser
 from email.policy import default
+from pathlib import Path
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -23,27 +25,24 @@ router = APIRouter()
 DEMO_HTML = """<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><title>FinFlowML Receipt Demo</title>
-<style>body{font:16px system-ui;max-width:720px;margin:40px auto;padding:0 20px}
-img{max-width:100%;max-height:360px;display:block;margin:16px 0}button{padding:10px 16px}
-pre{background:#f4f4f4;padding:12px;white-space:pre-wrap}.error{color:#b00020}</style></head>
-<body><h1>FinFlowML Receipt Review</h1><p><strong>Local demo:</strong> approval creates an expense only after review. Mock mode is labeled and is not AI inference.</p>
-<section id="login"><input id="email" type="email" placeholder="Email"><input id="password" type="password" placeholder="Password"><input id="organization" placeholder="Organization ID (optional)"><button id="loginButton">Log in</button></section><p id="loginStatus"></p>
-<section id="app" hidden>
-<input id="image" type="file" accept="image/*"><img id="preview" hidden>
-<button id="extract" disabled>Extract Receipt Data</button><p id="status"></p>
-<div id="review" hidden><label>Company <input id="company"></label><label>Date <input id="date" type="date"></label><label>Address <input id="address"></label><label>Total <input id="total"></label><label>Currency <input id="currency" value="USD"></label><button id="approve">Approve and create expense</button><button id="reject">Reject</button></div><pre id="result" hidden></pre>
+<style>body{font:16px system-ui;max-width:1100px;margin:32px auto;padding:0 20px;color:#17202a}button{padding:10px 14px;margin:4px;border:0;border-radius:6px;background:#155eef;color:#fff}button.secondary{background:#59636e}button.danger{background:#b42318}button:disabled{opacity:.5}input,textarea{padding:8px;width:100%;box-sizing:border-box;margin:4px 0 12px}img{max-width:100%;max-height:420px;display:block;border-radius:8px}.grid{display:grid;grid-template-columns:minmax(260px,1fr) minmax(360px,1.4fr);gap:24px}.card{border:1px solid #d0d5dd;border-radius:10px;padding:16px;margin:16px 0}.field{display:grid;grid-template-columns:130px 1fr;gap:8px;align-items:start;border-top:1px solid #eaecf0;padding:12px 0}.field small{display:block;color:#667085}.state{font-weight:600}.valid{color:#067647}.invalid{color:#b42318}.corrected{color:#175cd3}.missing{color:#667085}.error{color:#b42318}.sr{position:absolute;left:-10000px}</style></head>
+<body><h1>FinFlowML Receipt Review</h1><p><strong>Human review required:</strong> saving corrections never approves or posts an expense. Mock extraction mode is clearly labeled and is not AI inference.</p>
+<section id="login" class="card"><label>Email<input id="email" type="email" autocomplete="username"></label><label>Password<input id="password" type="password" autocomplete="current-password"></label><label>Organization ID (optional)<input id="organization"></label><button id="loginButton">Log in</button><p id="loginStatus" role="status"></p></section>
+<section id="app" hidden><div class="grid"><div><div class="card"><label>Receipt image<input id="image" type="file" accept="image/*"></label><img id="preview" alt="Uploaded receipt preview" hidden><button id="extract" disabled>Extract Receipt Data</button><p id="mode"></p><p id="status" role="status" aria-live="polite"></p><button id="retry" class="secondary" hidden>Retry extraction</button></div></div><div><div id="review" class="card" hidden><h2>Review extracted fields</h2><div id="fields"></div><button id="save">Save Corrections</button><button id="approve" disabled>Approve and create expense</button><button id="reject" class="danger">Reject</button><p id="message" role="status"></p></div></div></div></section>
 <script>
-const image=document.querySelector('#image'), preview=document.querySelector('#preview');
-const button=document.querySelector('#extract'), status=document.querySelector('#status'), review=document.querySelector('#review'); let receiptId;
-const result=document.querySelector('#result');
-image.onchange=()=>{const file=image.files[0]; button.disabled=!file; if(file){preview.src=URL.createObjectURL(file);preview.hidden=false}};
-button.onclick=async()=>{const data=new FormData();data.append('receipt',image.files[0]);button.disabled=true;status.textContent='Extracting…';result.hidden=true;
-try{const response=await fetch('/predict',{method:'POST',headers:{'Authorization':'Bearer '+token,'Idempotency-Key':crypto.randomUUID()},body:data});const body=await response.json();if(!response.ok)throw new Error(body.detail||'Upload failed'); receiptId=body.receipt_id; status.textContent='Queued: '+body.job_id+'. Waiting for extraction…'; poll(body.job_id); result.textContent=JSON.stringify(body,null,2);result.hidden=false;}
-catch(error){status.textContent=error.message;status.className='error';}finally{button.disabled=false;}};
-async function poll(job){const response=await fetch('/jobs/'+job,{headers:{'Authorization':'Bearer '+token}});const body=await response.json();status.textContent='Job status: '+body.state;if(body.state==='completed'){const receipt=await fetch('/receipts/'+body.receipt_id,{headers:{'Authorization':'Bearer '+token}});const data=await receipt.json();for(const field of ['company','receipt_date','address','total','currency'])document.querySelector('#'+(field==='receipt_date'?'date':field)).value=data[field]||'';review.hidden=false;return;}if(['terminal_failed'].includes(body.state)){status.textContent='Extraction failed: '+(body.error_message||'unknown error');return;}setTimeout(()=>poll(job),2000);}
-document.querySelector('#approve').onclick=async()=>{const corrections={company:company.value,receipt_date:date.value,address:address.value,total:total.value,currency:currency.value};const response=await fetch('/receipts/'+receiptId+'/corrections',{method:'PATCH',headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({corrections})});if(!response.ok){status.textContent='Correction failed';return;}const approved=await fetch('/receipts/'+receiptId+'/approve',{method:'POST',headers:{'Authorization':'Bearer '+token}});status.textContent=approved.ok?'Approved; expense created.':'Approval failed: '+(await approved.text());};
-document.querySelector('#reject').onclick=async()=>{const response=await fetch('/receipts/'+receiptId+'/reject',{method:'POST',headers:{'Authorization':'Bearer '+token}});status.textContent=response.ok?'Receipt rejected.':'Rejection failed';};
-let token=null; document.querySelector('#loginButton').onclick=async()=>{const body={email:email.value,password:password.value};if(organization.value)body.organization_id=organization.value;const response=await fetch('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(!response.ok){loginStatus.textContent='Login failed';return;}token=(await response.json()).access_token;login.hidden=true;app.hidden=false;loginStatus.textContent='Authenticated locally; token is kept in memory only.';};
+let token=null,receiptId=null,jobId=null;const fields=['company','receipt_date','address','total','currency'];const labels={company:'Company',receipt_date:'Receipt date',address:'Address',total:'Total',currency:'Currency'};const $=id=>document.getElementById(id);const esc=v=>v==null?'(none)':String(v);
+function showMessage(text,error=false){$('message').textContent=text;$('message').className=error?'error':''}function auth(){return {'Authorization':'Bearer '+token}};
+function renderReview(data){const container=$('fields');container.replaceChildren();let blocked=false;for(const field of fields){const item=data.fields[field];const row=document.createElement('div');row.className='field';const title=document.createElement('strong');title.textContent=labels[field];const body=document.createElement('div');const state=document.createElement('span');state.className='state '+item.status;state.textContent=item.status;body.append(state);for(const [name,key] of [['Original model','original_model_value'],['Normalized','normalized_value'],['Reviewer correction','reviewer_corrected_value'],['Effective','effective_value']]){const line=document.createElement('small');line.textContent=name+': '+esc(item[key]);body.append(line)}if(item.errors.length){blocked=true;const errors=document.createElement('small');errors.className='error';errors.textContent='Errors: '+item.errors.join('; ');body.append(errors)}const input=document.createElement(field==='address'?'textarea':'input');input.name=field;input.value=item.reviewer_corrected_value??item.effective_value??'';input.setAttribute('aria-label','Correction for '+labels[field]);body.append(input);row.append(title,body);container.append(row)}$('approve').disabled=blocked||data.status!=='needs_review';$('review').hidden=false;window.reviewStatus=data.status}
+async function loadReview(){const r=await fetch('/receipts/'+receiptId+'/review',{headers:auth()});if(!r.ok)throw new Error('Could not load review');renderReview(await r.json())}
+async function poll(){const r=await fetch('/jobs/'+jobId,{headers:auth()});const data=await r.json();$('status').textContent='Job status: '+data.state;if(data.state==='completed'){await loadReview();return}if(['terminal_failed','retryable_failed'].includes(data.state)){ $('status').textContent='Extraction failed: '+(data.error_message||data.state);$('retry').hidden=data.state!=='retryable_failed';return}setTimeout(poll,1500)}
+$('image').onchange=()=>{const file=$('image').files[0];$('extract').disabled=!file;if(file){$('preview').src=URL.createObjectURL(file);$('preview').hidden=false}};
+$('extract').onclick=async()=>{const form=new FormData();form.append('receipt',$('image').files[0]);$('extract').disabled=true;$('status').textContent='Uploading…';try{const r=await fetch('/predict',{method:'POST',headers:{...auth(),'Idempotency-Key':crypto.randomUUID()},body:form});const data=await r.json();if(!r.ok)throw new Error(data.detail||'Upload failed');receiptId=data.receipt_id;jobId=data.job_id;$('mode').textContent=data.mock?'MOCK EXTRACTION — not AI inference':'Live extraction';$('status').textContent='Queued; waiting for extraction…';poll()}catch(e){showMessage(e.message,true)}finally{$('extract').disabled=false}};
+$('retry').onclick=async()=>{const r=await fetch('/jobs/'+jobId+'/retry',{method:'POST',headers:auth()});if(!r.ok){showMessage('Retry failed',true);return}$('retry').hidden=true;$('status').textContent='Retry queued…';poll()};
+function corrections(){const out={};for(const field of fields){const input=document.querySelector('[name="'+field+'"]');out[field]=input.value||null}return out}
+$('save').onclick=async()=>{try{const r=await fetch('/receipts/'+receiptId+'/corrections',{method:'PATCH',headers:{...auth(),'Content-Type':'application/json'},body:JSON.stringify({corrections:corrections()})});const data=await r.json();if(!r.ok)throw new Error(data.detail||'Save failed');await loadReview();showMessage('Corrections saved. Approval remains a separate action.')}catch(e){showMessage(e.message,true)}};
+$('approve').onclick=async()=>{if(!confirm('Approve this reviewed receipt and create an expense?'))return;try{const r=await fetch('/receipts/'+receiptId+'/approve',{method:'POST',headers:auth()});const data=await r.json();if(!r.ok)throw new Error(data.detail||'Approval failed');showMessage('Approved; expense created.');$('approve').disabled=true;$('save').disabled=true;$('reject').disabled=true}catch(e){showMessage(e.message,true);await loadReview()}};
+$('reject').onclick=async()=>{if(!confirm('Reject this receipt?'))return;try{const r=await fetch('/receipts/'+receiptId+'/reject',{method:'POST',headers:auth()});if(!r.ok)throw new Error((await r.json()).detail||'Rejection failed');showMessage('Receipt rejected.');$('approve').disabled=true;$('save').disabled=true;$('reject').disabled=true}catch(e){showMessage(e.message,true)}};
+$('loginButton').onclick=async()=>{const body={email:$('email').value,password:$('password').value};if($('organization').value)body.organization_id=$('organization').value;const r=await fetch('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(!r.ok){$('loginStatus').textContent='Login failed';return}token=(await r.json()).access_token;$('login').hidden=true;$('app').hidden=false;$('loginStatus').textContent='Authenticated; token kept in memory only.'};
 </script></body></html>"""
 
 
@@ -74,6 +73,22 @@ async def demo_page() -> str:
     return DEMO_HTML
 
 
+@router.get("/receipts/{receipt_id}/image")
+async def receipt_image(receipt_id: UUID, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("read"))):
+    item = db.scalar(select(Receipt).where(Receipt.id == receipt_id, Receipt.organization_id == actor.organization_id))
+    if item is None:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    path = Path(item.image_reference or "")
+    root = Path(settings.upload_root).resolve()
+    try:
+        safe_path = path.resolve(strict=True)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Receipt image not found") from None
+    if root not in safe_path.parents or not safe_path.is_file():
+        raise HTTPException(status_code=404, detail="Receipt image not found")
+    return FileResponse(safe_path)
+
+
 @router.post("/predict", status_code=202)
 async def predict_receipt(request: Request, db: Session = Depends(get_db), actor: CurrentUser = Depends(require_permission("review")), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"), correlation_id: str | None = Header(default=None, alias="X-Correlation-ID")) -> dict[str, object]:
     content_type = request.headers.get("content-type", "")
@@ -92,6 +107,7 @@ async def predict_receipt(request: Request, db: Session = Depends(get_db), actor
     item = Receipt(
         organization_id=actor.organization_id,
         source_filename=filename,
+        image_reference=path,
         ocr_text="mock OCR text" if os.environ.get("FINFLOW_MOCK_EXTRACTION") else None,
         status="pending",
     )
