@@ -4,6 +4,7 @@ import time
 from threading import Event, Thread
 
 from backend.app.core.config import settings
+from backend.app.database import base as _model_registry  # noqa: F401
 from backend.app.database.session import SessionLocal
 from backend.app.services.extraction_jobs import claim_next, process_job, reclaim_stale, renew_lease
 

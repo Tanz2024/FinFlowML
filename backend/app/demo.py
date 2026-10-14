@@ -47,7 +47,7 @@ $('reject').onclick=async()=>{if(!confirm('Reject this receipt?'))return;try{con
 $('openReceipt').onclick=async()=>{pollGeneration++;receiptId=$('receiptIdInput').value.trim();if(!receiptId){showMessage('Enter a receipt ID',true);return}try{await loadReview();$('status').textContent='Receipt loaded.'}catch(e){showMessage(e.message,true)}};
 $('pending').onchange=async()=>{if(!$('pending').value)return;pollGeneration++;receiptId=$('pending').value;try{await loadReview()}catch(e){showMessage(e.message,true)}};
 async function loadPending(){const r=await fetch('/receipts/pending',{headers:auth()});const data=await r.json();if(!r.ok)apiError(r,data);const select=$('pending');for(const item of data){const option=document.createElement('option');option.value=item.id;option.textContent=(item.company||item.id)+' — '+item.status;select.append(option)}}
-$('loginButton').onclick=async()=>{const body={email:$('email').value,password:$('password').value};if($('organization').value)body.organization_id=$('organization').value;try{const r=await fetch('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json();if(!r.ok)apiError(r,data);token=data.access_token;role=data.role;$('login').hidden=true;$('app').hidden=false;$('loginStatus').textContent='Authenticated; token kept in memory only.';await loadPending()}catch(e){$('loginStatus').textContent=e.message;$('loginStatus').className='error'}};
+$('loginButton').onclick=async()=>{const body={email:$('email').value,password:$('password').value};if($('organization').value)body.organization_id=$('organization').value;try{const r=await fetch('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json();if(!r.ok){$('loginStatus').textContent='Login failed';$('loginStatus').className='error';return}token=data.access_token;role=data.role;$('login').hidden=true;$('app').hidden=false;$('loginStatus').textContent='Authenticated; token kept in memory only.';await loadPending()}catch(e){$('loginStatus').textContent=e.message;$('loginStatus').className='error'}};
 </script></body></html>"""
 
 
@@ -55,10 +55,12 @@ def _uploaded_file(body: bytes, content_type: str) -> tuple[str, bytes]:
     message = BytesParser(policy=default).parsebytes(
         f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode() + body
     )
-    for part in message.iter_attachments():
+    for part in message.walk():
+        if part.is_multipart():
+            continue
         filename = part.get_filename() or "receipt.jpg"
         payload = part.get_payload(decode=True)
-        if payload:
+        if payload and (part.get_filename() or part.get_content_disposition() in {"attachment", "form-data"}):
             if len(payload) > settings.max_upload_bytes:
                 raise HTTPException(status_code=413, detail="uploaded file is too large")
             try:
