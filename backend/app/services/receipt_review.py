@@ -17,7 +17,9 @@ FIELDS = ("company", "receipt_date", "address", "total", "currency")
 
 
 def effective_data(receipt: Receipt) -> dict:
-    data = dict(receipt.raw_extracted_data or receipt.extracted_data or {})
+    data = dict(receipt.extracted_data or {})
+    if "date" in data and "receipt_date" not in data:
+        data["receipt_date"] = data.pop("date")
     data.update(receipt.corrected_data or {})
     data.setdefault("company", receipt.company)
     data.setdefault("receipt_date", receipt.receipt_date.isoformat() if receipt.receipt_date else None)
@@ -59,7 +61,7 @@ def transition(receipt: Receipt, target: ReceiptStatus) -> None:
 
 def store_extraction(db: Session, receipt: Receipt, *, commit: bool = True) -> Receipt:
     transition(receipt, ReceiptStatus.PROCESSING)
-    raw = {
+    raw = dict(receipt.raw_extracted_data or {}) or {
         key: value.isoformat() if hasattr(value, "isoformat") else str(value) if isinstance(value, Decimal) else value
         for key, value in (receipt.extracted_data or {}).items()
     }

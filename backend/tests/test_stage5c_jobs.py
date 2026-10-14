@@ -37,6 +37,25 @@ def test_duplicate_submission_reuses_job(client, monkeypatch):
     assert first["job_id"] == second["job_id"]
 
 
+def test_model_extraction_keeps_raw_values_and_reviews_normalized_values(client, client_db, monkeypatch):
+    import backend.app.demo as demo
+    import ml.inference.predict as inference
+
+    monkeypatch.setattr(demo, "_uploaded_file", lambda body, content_type: ("receipt.jpg", b"normalized"))
+    monkeypatch.setattr(inference, "predict_image", lambda *args, **kwargs: (
+        "OCR", "{}", {"company": "  OJC   MARKETING SDN BHD ", "date": "15/01/201911:05:16AM", "address": "A  Road\nJohor", "total": "RM 193", "currency": "MYR"}, None,
+    ))
+    payload = client.post("/predict", files={"receipt": ("receipt.jpg", b"ignored", "image/jpeg")}, headers={"Idempotency-Key": "normalize-1"}).json()
+    claimed = claim_next(client_db)
+    process_job(client_db, claimed.id, claimed.lease_owner, claimed.fence)
+    receipt = client.get(f"/receipts/{payload['receipt_id']}").json()
+    assert receipt["extracted_data"]["date"] == "2019-01-15"
+    assert receipt["extracted_data"]["address"] == "a road johor"
+    assert receipt["extracted_data"]["total"] == "193.00"
+    assert receipt["raw_extracted_data"]["date"] == "15/01/201911:05:16AM"
+    assert receipt["status"] == "needs_review"
+
+
 def test_idempotency_key_rejects_different_content(client, monkeypatch):
     import backend.app.demo as demo
     monkeypatch.setattr(demo, "_uploaded_file", lambda body, content_type: ("receipt.jpg", body))

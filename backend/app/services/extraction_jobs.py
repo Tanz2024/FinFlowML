@@ -17,6 +17,7 @@ from backend.app.models.extraction_job import ExtractionJob, ExtractionJobState
 from backend.app.models.receipt import Receipt
 from backend.app.services.audit import record_event
 from backend.app.services.receipt_review import store_extraction
+from ml.data.normalize import normalize_target
 
 
 def durable_upload(organization_id: UUID, filename: str, payload: bytes) -> str:
@@ -113,12 +114,16 @@ def process_job(db: Session, job_id: UUID, lease_owner: str | None = None, fence
             _, _, prediction, parsing_error = predict_image(job.storage_path, settings.model_id, settings.adapter_path, revision=settings.model_revision or None)
             if prediction is None:
                 raise ValueError(parsing_error or "model output could not be parsed")
-        receipt.extracted_data = prediction
-        receipt.company = prediction.get("company")
-        receipt.receipt_date = datetime.fromisoformat(prediction["date"]).date() if prediction.get("date") else None
-        receipt.address = prediction.get("address")
-        receipt.total = prediction.get("total")
-        receipt.currency = prediction.get("currency")
+        normalized = {field: normalize_target(field, prediction.get(field)) for field in ("company", "date", "address", "total")}
+        normalized["currency"] = prediction.get("currency")
+        receipt.raw_extracted_data = dict(prediction)
+        receipt.extracted_data = normalized
+        receipt.company = normalized.get("company")
+        normalized_date = normalized.get("date")
+        receipt.receipt_date = datetime.fromisoformat(normalized_date).date() if normalized_date and len(normalized_date) == 10 and normalized_date[4] == "-" else None
+        receipt.address = normalized.get("address")
+        receipt.total = normalized.get("total")
+        receipt.currency = normalized.get("currency")
         updated = db.query(ExtractionJob).filter(ExtractionJob.id == job.id, ExtractionJob.state == ExtractionJobState.PROCESSING, ExtractionJob.lease_owner == lease_owner, ExtractionJob.fence == fence).update({"state": ExtractionJobState.COMPLETED, "lease_until": None, "lease_owner": None, "error_code": None, "error_message": None}, synchronize_session=False)
         if updated != 1:
             db.rollback()
