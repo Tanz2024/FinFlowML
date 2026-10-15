@@ -1,0 +1,7 @@
+# GPU-only dependency overlay. Dockerfile.gpu combines this file with the
+# shared and training requirements after removing the CPU-incompatible SymPy
+# pin. Do not install this file by itself.
+sympy==1.13.1
+torch==2.6.0
+paddleocr==3.3.2
+paddlepaddle-gpu==3.3.0

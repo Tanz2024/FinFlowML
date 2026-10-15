@@ -1,0 +1,14 @@
+name: GPU image build preflight
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build GPU worker image without runtime claims
+        run: docker build --file Dockerfile.gpu --tag finflowml-gpu-preflight:ci .

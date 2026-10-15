@@ -3,11 +3,16 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system finflow && useradd --system --gid finflow --home-dir /app finflow
-COPY requirements-training.txt requirements.txt /app/
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu124 torch==2.6.0 \
-    && pip install --no-cache-dir -r requirements.txt -r requirements-training.txt \
-    paddleocr==3.3.2 \
-    --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ paddlepaddle-gpu==3.2.2
+COPY requirements-training.txt requirements.txt requirements-gpu.txt /app/
+RUN awk '!/^sympy==/ && !/^-r requirements.txt$/' /app/requirements.txt /app/requirements-training.txt \
+      > /tmp/finflow-gpu-requirements.txt \
+    && cat /app/requirements-gpu.txt >> /tmp/finflow-gpu-requirements.txt \
+    && pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cu124 \
+    --extra-index-url https://pypi.org/simple \
+    --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ \
+    -r /tmp/finflow-gpu-requirements.txt \
+    && rm -f /tmp/finflow-gpu-requirements.txt
 COPY backend /app/backend
 COPY ml /app/ml
 COPY scripts /app/scripts

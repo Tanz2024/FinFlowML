@@ -102,3 +102,25 @@ approved controlled download phase.
 The current GPU Docker and worker path has not been executed on the development
 host. Successful historical Colab inference does not validate this container
 integration gate.
+
+## GPU image dependency preflight
+
+`Dockerfile.gpu` uses Python 3.11, the CUDA 12.4 PyTorch 2.6.0 wheel index,
+and PaddlePaddle-GPU 3.3.0 from the official CUDA 12.6 package index. The
+shared `sympy==1.14.0` pin is deliberately replaced in the GPU build with
+`sympy==1.13.1`, which is the compatible PyTorch 2.6.0 dependency. The image
+build combines these requirements and resolves dependencies normally; it does
+not use `--no-deps`.
+
+The build-only preflight can be run without a GPU:
+
+```bash
+docker build --file Dockerfile.gpu --tag finflowml-gpu-preflight:local .
+```
+
+The repository also provides a manual GitHub Actions build-only workflow at
+`.github/workflows/gpu-image-build.yml`. A successful build proves only Linux
+package and image resolution. It does not prove NVIDIA driver access, CUDA
+initialization, model loading, OCR, or application-worker inference. The
+development Mac cannot execute this build locally when Docker is unavailable;
+the workflow must be run before treating the image as build-verified.
