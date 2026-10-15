@@ -8,8 +8,13 @@ artifact and must never be committed. The expected authorized Drive folder is:
 It must contain `adapter_config.json`, `adapter_model.safetensors`, and
 `README.md`. The current macOS ARM development host has no NVIDIA runtime,
 and the connected Drive account was not available during this validation.
-Therefore Stage 7B remains **BLOCKED** until the checks below are run on an
-allocated CUDA runtime.
+Standalone Colab inference has since been confirmed by the project owner with
+the following sanitized result: `status=passed`, `cuda=true`,
+`adapter_loaded=true`, `parsing_error=null`, OCR characters `103`, OCR time
+`7.517s`, cold model load `365.34s`, total `394.512s`, company `DEMO CAFE SDN
+BHD`, date `15/10/2026`, address `123 TEST ROAD KUALA LUMPUR`, and total
+`MYR 12.50`. This is a standalone acceptance result only; GPU Docker worker
+integration remains **NOT TESTED**, so full Stage 7B remains blocked.
 
 ## Recover and validate the adapter in Colab
 
@@ -62,8 +67,11 @@ python scripts/qwen_gpu_smoke.py \
 ```
 
 Accept evidence only when it contains `status: passed`, `cuda: true`,
-`adapter_loaded: true`, a parsed prediction, `parsing_error: null`, positive
-OCR character count, the pinned model revision, and measured stage timings.
+`adapter_loaded: true`, `prediction_valid: true`, `parsing_error: null`,
+positive OCR character count, the pinned model revision, and measured stage
+timings. The smoke test now omits raw model output and extracted values from
+evidence by default. Use `--include-debug-output` only for a controlled local
+diagnostic that must not be uploaded or retained as operational evidence.
 Do not store raw OCR text, generated output, receipt images, credentials, or
 tokens in operational logs.
 

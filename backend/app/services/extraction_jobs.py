@@ -17,6 +17,7 @@ from backend.app.models.extraction_job import ExtractionJob, ExtractionJobState
 from backend.app.models.receipt import Receipt
 from backend.app.services.audit import record_event
 from backend.app.services.receipt_review import store_extraction
+from backend.app.services.currency import detect_explicit_currency
 from ml.data.normalize import normalize_target
 
 
@@ -107,15 +108,16 @@ def process_job(db: Session, job_id: UUID, lease_owner: str | None = None, fence
         return job
     try:
         started = time.monotonic()
+        ocr_text = None
         if os.environ.get("FINFLOW_MOCK_EXTRACTION", "").lower() in {"1", "true", "yes"}:
             prediction = {"company": "Mock Cafe", "date": "2025-01-15", "address": "1 Demo Road", "total": "12.50", "currency": "USD"}
         else:
             from ml.inference.predict import predict_image
-            _, _, prediction, parsing_error = predict_image(job.storage_path, settings.model_id, settings.adapter_path, revision=settings.model_revision or None)
+            ocr_text, _, prediction, parsing_error = predict_image(job.storage_path, settings.model_id, settings.adapter_path, revision=settings.model_revision or None)
             if prediction is None:
                 raise ValueError(parsing_error or "model output could not be parsed")
         normalized = {field: normalize_target(field, prediction.get(field)) for field in ("company", "date", "address", "total")}
-        normalized["currency"] = prediction.get("currency")
+        normalized["currency"] = prediction.get("currency") or detect_explicit_currency(normalized.get("total"), ocr_text)
         receipt.raw_extracted_data = dict(prediction)
         receipt.extracted_data = normalized
         receipt.company = normalized.get("company")

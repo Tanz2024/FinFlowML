@@ -37,3 +37,15 @@ def test_run_stage_reads_result_file_when_worker_is_noisy(tmp_path):
     assert payload == {"ok": True}
     assert seconds >= 0
     assert isinstance(result_path, Path)
+
+
+def test_smoke_evidence_excludes_model_output_by_default(tmp_path):
+    evidence = tmp_path / "evidence.json"
+    result = subprocess.run(
+        [sys.executable, "scripts/qwen_gpu_smoke.py", "--evidence", str(evidence)],
+        capture_output=True, text=True, check=False,
+    )
+    payload = json.loads(evidence.read_text())
+    assert result.returncode == 1
+    assert "raw_output" not in payload
+    assert "prediction" not in payload

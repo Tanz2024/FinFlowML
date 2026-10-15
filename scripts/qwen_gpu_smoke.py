@@ -85,6 +85,8 @@ def main() -> int:
     parser.add_argument("--revision", default="cdbee75f17c01a7cc42f958dc650907174af0554")
     parser.add_argument("--max-new-tokens", type=int, default=256)
     parser.add_argument("--evidence", type=Path)
+    parser.add_argument("--include-debug-output", action="store_true",
+                        help="Include prediction/raw output in evidence for controlled local diagnostics")
     parser.add_argument("--_stage", choices=("ocr", "model"))
     parser.add_argument("--ocr-json", type=Path)
     parser.add_argument("--result", type=Path)
@@ -115,7 +117,16 @@ def main() -> int:
                 raise RuntimeError("model stage did not confirm CUDA and adapter loading")
             if not isinstance(model_payload.get("prediction"), dict) or model_payload.get("parsing_error") is not None:
                 raise RuntimeError("model stage did not produce a valid prediction")
-            evidence.update(model_payload, ocr_seconds=round(ocr_seconds, 3), model_seconds=round(model_seconds, 3), status="passed")
+            evidence.update(
+                cuda=model_payload.get("cuda"), base_model=model_payload.get("base_model"),
+                revision=model_payload.get("revision"), adapter_loaded=model_payload.get("adapter_loaded"),
+                model_load_seconds=model_payload.get("model_load_seconds"), ocr_chars=model_payload.get("ocr_chars"),
+                parsing_error=model_payload.get("parsing_error"),
+                prediction_valid=isinstance(model_payload.get("prediction"), dict),
+                ocr_seconds=round(ocr_seconds, 3), model_seconds=round(model_seconds, 3), status="passed")
+            if args.include_debug_output:
+                evidence["prediction"] = model_payload.get("prediction")
+                evidence["raw_output"] = model_payload.get("raw_output")
     except Exception as exc:
         evidence.update(error_type=type(exc).__name__, error=str(exc)); _log(str(exc))
     evidence["total_seconds"] = round(time.monotonic() - started, 3)
