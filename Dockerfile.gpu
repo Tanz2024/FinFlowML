@@ -10,7 +10,7 @@ RUN awk '!/^sympy==/ && !/^-r requirements.txt$/' /app/requirements.txt /app/req
     && pip install --no-cache-dir \
     --index-url https://download.pytorch.org/whl/cu124 \
     --extra-index-url https://pypi.org/simple \
-    --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ \
+    --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cpu/ \
     --timeout 300 \
     -r /tmp/finflow-gpu-requirements.txt \
     && rm -f /tmp/finflow-gpu-requirements.txt

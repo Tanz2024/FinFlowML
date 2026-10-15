@@ -106,8 +106,9 @@ integration gate.
 ## GPU image dependency preflight
 
 `Dockerfile.gpu` uses Python 3.11, the CUDA 12.4 PyTorch 2.6.0 wheel index,
-and PaddlePaddle-GPU 3.3.0 from the official CUDA 12.6 package index. The
-shared `sympy==1.14.0` pin is deliberately replaced in the GPU build with
+and CPU PaddlePaddle 3.3.0 from the official CPU package index. CPU Paddle is
+intentional: it provides real PaddleOCR without introducing a second, conflicting
+CUDA runtime into the PyTorch/Qwen worker. The shared `sympy==1.14.0` pin is deliberately replaced in the GPU build with
 `sympy==1.13.1`, which is the compatible PyTorch 2.6.0 dependency. The image
 build combines these requirements and resolves dependencies normally; it does
 not use `--no-deps`.
@@ -191,8 +192,14 @@ PY
 # inspect model evidence, review, correct only changed fields, approve once,
 # and assert exactly one expense. Repeat with a second receipt and record cold
 # versus warm timings and peak VRAM from nvidia-smi.
+REQUIRE_REAL_WORKFLOW=true FINFLOW_MOCK_EXTRACTION=false \
+SMOKE_EMAIL='synthetic-admin@example.test' \
+SMOKE_PASSWORD='provided-out-of-band' \
+SMOKE_IMAGE=/path/to/synthetic-receipt.png \
 SMOKE_TIMEOUT_SECONDS=900 SMOKE_RETRY_FAILED=true \
-  scripts/container_smoke.sh https://127.0.0.1:8000 /path/to/synthetic-receipt.png
+MODEL_ID='Qwen/Qwen3-4B-Instruct-2507' \
+MODEL_REVISION='cdbee75f17c01a7cc42f958dc650907174af0554' \
+  scripts/container_smoke.sh
 nvidia-smi --query-gpu=timestamp,memory.used,memory.total --format=csv
 
 # Recovery: restart only the worker, verify an expired lease is reclaimed, and

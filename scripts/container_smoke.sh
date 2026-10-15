@@ -4,6 +4,10 @@ base_url="${BASE_URL:-http://127.0.0.1:8000}"
 curl --fail --silent "${base_url}/health" | grep -q '"status":"ok"'
 echo "container health: ok"
 if [[ -z "${SMOKE_EMAIL:-}" || -z "${SMOKE_PASSWORD:-}" || -z "${SMOKE_IMAGE:-}" ]]; then
+  if [[ "${REQUIRE_REAL_WORKFLOW:-false}" == "true" ]]; then
+    echo "real workflow requires SMOKE_EMAIL, SMOKE_PASSWORD, and SMOKE_IMAGE" >&2
+    exit 2
+  fi
   echo "container health check completed; AI workflow was NOT run (set SMOKE_EMAIL, SMOKE_PASSWORD, and SMOKE_IMAGE)"
   exit 0
 fi

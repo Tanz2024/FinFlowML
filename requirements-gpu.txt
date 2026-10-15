@@ -4,4 +4,6 @@
 sympy==1.13.1
 torch==2.6.0
 paddleocr==3.3.2
-paddlepaddle-gpu==3.3.0
+# PaddleOCR uses CPU Paddle in this worker to avoid conflicting CUDA runtime
+# pins with the CUDA PyTorch/Qwen stack. OCR remains real PaddleOCR, not mock.
+paddlepaddle==3.3.0
