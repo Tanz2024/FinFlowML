@@ -16,5 +16,16 @@ def test_normalization_is_conservative():
 def test_currency_detection_requires_one_explicit_marker():
     assert detect_explicit_currency("TOTAL RM 12.50") == "MYR"
     assert detect_explicit_currency("USD 12.50") == "USD"
+    assert detect_explicit_currency("US$ 12.50") == "USD"
+    assert detect_explicit_currency("EUR 12.50") == "EUR"
+    assert detect_explicit_currency("€12.50") == "EUR"
+    assert detect_explicit_currency("GBP 12.50") == "GBP"
+    assert detect_explicit_currency("£12.50") == "GBP"
+    assert detect_explicit_currency("SGD 12.50") == "SGD"
+    assert detect_explicit_currency("AUD 12.50") == "AUD"
+    assert detect_explicit_currency("CAD 12.50") == "CAD"
     assert detect_explicit_currency("12.50") is None
+    assert detect_explicit_currency("$12.50") is None
     assert detect_explicit_currency("RM 12.50 USD 3.00") is None
+    assert detect_explicit_currency("company address, total 12.50") is None
+    assert detect_explicit_currency("MYR 12.50", "USD 12.50") is None

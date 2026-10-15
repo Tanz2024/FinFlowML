@@ -1,7 +1,7 @@
 """Currency and amount normalization helpers shared by ingestion services."""
 
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 import re
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 DEFAULT_CURRENCY = "USD"
 
@@ -16,8 +16,9 @@ _CURRENCY_ALIASES = {
 }
 
 _EXPLICIT_CURRENCY_TOKENS = {
-    "MYR": "MYR", "RM": "MYR", "USD": "USD", "US$": "USD", "$": "USD",
+    "MYR": "MYR", "RM": "MYR", "USD": "USD", "US$": "USD",
     "EUR": "EUR", "€": "EUR", "GBP": "GBP", "£": "GBP",
+    "SGD": "SGD", "S$": "SGD", "AUD": "AUD", "A$": "AUD", "CAD": "CAD", "C$": "CAD",
 }
 
 
@@ -29,7 +30,7 @@ def detect_explicit_currency(*values: str | None) -> str | None:
             continue
         text = str(value).upper()
         for token, currency in _EXPLICIT_CURRENCY_TOKENS.items():
-            present = (token in text if token in {"$", "€", "£"} else
+            present = (token in text if token in {"€", "£"} else
                        re.search(rf"(?<![A-Z]){re.escape(token)}(?![A-Z])", text) is not None)
             if present:
                 found.add(currency)

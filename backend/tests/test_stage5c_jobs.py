@@ -56,6 +56,29 @@ def test_model_extraction_keeps_raw_values_and_reviews_normalized_values(client,
     assert receipt["status"] == "needs_review"
 
 
+def test_four_field_model_prediction_detects_currency_from_total(client, client_db, monkeypatch):
+    import backend.app.demo as demo
+    import ml.inference.predict as inference
+
+    monkeypatch.setattr(demo, "_uploaded_file", lambda body, content_type: ("receipt.jpg", b"colab-shape"))
+    monkeypatch.setattr(inference, "predict_image", lambda *args, **kwargs: (
+        "DEMO CAFE SDN BHD\n15/10/2026\n123 TEST ROAD KUALA LUMPUR\nTOTAL MYR 12.50",
+        "{}",
+        {"company": "DEMO CAFE SDN BHD", "date": "15/10/2026", "address": "123 TEST ROAD KUALA LUMPUR", "total": "MYR 12.50"},
+        None,
+    ))
+    payload = client.post("/predict", files={"receipt": ("receipt.jpg", b"ignored", "image/jpeg")}, headers={"Idempotency-Key": "colab-shape-1"}).json()
+    claimed = claim_next(client_db)
+    process_job(client_db, claimed.id, claimed.lease_owner, claimed.fence)
+    receipt = client.get(f"/receipts/{payload['receipt_id']}").json()
+    assert receipt["extracted_data"] == {
+        "company": "demo cafe sdn bhd", "date": "2026-10-15",
+        "address": "123 test road kuala lumpur", "total": "12.50", "currency": "MYR",
+    }
+    assert receipt["raw_extracted_data"]["total"] == "MYR 12.50"
+    assert receipt["status"] == "needs_review"
+
+
 def test_idempotency_key_rejects_different_content(client, monkeypatch):
     import backend.app.demo as demo
     monkeypatch.setattr(demo, "_uploaded_file", lambda body, content_type: ("receipt.jpg", body))
