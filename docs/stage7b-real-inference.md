@@ -108,10 +108,12 @@ integration gate.
 `Dockerfile.gpu` uses Python 3.11, the CUDA 12.4 PyTorch 2.6.0 wheel index,
 and CPU PaddlePaddle 3.3.0 from the official CPU package index. CPU Paddle is
 intentional: it provides real PaddleOCR without introducing a second, conflicting
-CUDA runtime into the PyTorch/Qwen worker. The shared `sympy==1.14.0` pin is deliberately replaced in the GPU build with
-`sympy==1.13.1`, which is the compatible PyTorch 2.6.0 dependency. The image
-build combines these requirements and resolves dependencies normally; it does
-not use `--no-deps`.
+CUDA runtime into the PyTorch/Qwen worker. The shared `sympy==1.14.0` pin is
+deliberately replaced in the GPU build with `sympy==1.13.1`, which is the
+compatible PyTorch 2.6.0 dependency. The shared `PyYAML==6.0.3` pin is also
+replaced with `6.0.2`, required by the PaddleX release selected by PaddleOCR
+3.3.2. The image build combines these requirements and resolves dependencies
+normally; it does not use `--no-deps`.
 
 The build-only preflight can be run without a GPU:
 

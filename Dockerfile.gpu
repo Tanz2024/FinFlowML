@@ -4,7 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system finflow && useradd --system --gid finflow --home-dir /app finflow
 COPY requirements-training.txt requirements.txt requirements-gpu.txt /app/
-RUN awk '!/^sympy==/ && !/^-r requirements.txt$/' /app/requirements.txt /app/requirements-training.txt \
+RUN awk '!/^sympy==/ && !/^PyYAML==/ && !/^-r requirements.txt$/' /app/requirements.txt /app/requirements-training.txt \
       > /tmp/finflow-gpu-requirements.txt \
     && cat /app/requirements-gpu.txt >> /tmp/finflow-gpu-requirements.txt \
     && pip install --no-cache-dir \
