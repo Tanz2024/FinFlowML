@@ -9,7 +9,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ENVIRONMENT: test
-      FINFLOW_MOCK_EXTRACTION: "true"
       AUTH_SECRET: test-only-secret-that-is-long-enough-123456
     steps:
       - uses: actions/checkout@v4
