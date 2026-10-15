@@ -96,7 +96,7 @@ test("scanner resumes an existing job without uploading it again", async ({ page
   });
   await page.route("**/api/jobs/job-resume", async (route) => {
     jobReads += 1;
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ state: jobReads < 2 ? "processing" : "completed" }) });
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ state: jobReads <= 90 ? "processing" : "completed" }) });
   });
   await page.route("**/api/receipts/receipt-resume/review", async (route) => {
     const fields = Object.fromEntries(["company", "receipt_date", "address", "total", "currency"].map((field) => [field, { original_model_value: null, normalized_value: null, reviewer_corrected_value: null, effective_value: null, status: "missing", errors: [] }]));
@@ -107,8 +107,17 @@ test("scanner resumes an existing job without uploading it again", async ({ page
   await page.getByLabel(/Drop a receipt here/).setInputFiles({ name: "resume.png", mimeType: "image/png", buffer: png });
   await page.getByRole("button", { name: "Start extraction" }).click();
   await expect.poll(() => jobReads).toBeGreaterThan(0);
-  await page.clock.fastForward(1_100);
+  for (let attempt = 0; attempt < 90; attempt += 1) {
+    await page.clock.fastForward(1_000);
+    await expect.poll(() => jobReads).toBeGreaterThan(attempt);
+  }
+  const resume = page.getByRole("button", { name: "Resume polling" });
+  await expect(resume).toBeVisible();
+  expect(predictCalls).toBe(1);
+  expect(jobReads).toBe(90);
+  await resume.click();
   await expect(page).toHaveURL(/review\/receipt-resume/);
   expect(predictCalls).toBe(1);
-  expect(jobReads).toBeGreaterThanOrEqual(2);
+  expect(jobReads).toBe(92);
+  expect(page.url()).toContain("receipt-resume");
 });
