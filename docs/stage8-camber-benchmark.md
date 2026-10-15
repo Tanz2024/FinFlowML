@@ -12,7 +12,7 @@ receipts; the second contains 30–50 independent, never-seen receipts. Each is
 a JSON list with local image paths and expected fields, for example:
 
 ```json
-[{"image":"/job/smoke/receipt-01.png","expected":{"company":"DEMO CAFE SDN BHD","receipt_date":"15/10/2026","address":"123 TEST ROAD KUALA LUMPUR","total":"MYR 12.50"}}]
+[{"image":"/job/smoke/receipt-01.png","expected":{"company":"DEMO CAFE SDN BHD","date":"15/10/2026","address":"123 TEST ROAD KUALA LUMPUR","total":"MYR 12.50"}}]
 ```
 
 ## Camber Nova commands
