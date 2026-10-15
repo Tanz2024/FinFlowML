@@ -85,3 +85,30 @@ test("dashboard keeps currency selection explicit and mobile navigation works", 
   await expect(page.getByRole("button", { name: "Close navigation" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Pending reviews" })).toBeVisible();
 });
+
+test("scanner resumes an existing job without uploading it again", async ({ page }) => {
+  await login(page, "admin");
+  let predictCalls = 0;
+  let jobReads = 0;
+  await page.route("**/api/predict", async (route) => {
+    predictCalls += 1;
+    await route.fulfill({ status: 202, contentType: "application/json", body: JSON.stringify({ job_id: "job-resume", receipt_id: "receipt-resume", mock: true }) });
+  });
+  await page.route("**/api/jobs/job-resume", async (route) => {
+    jobReads += 1;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ state: jobReads < 2 ? "processing" : "completed" }) });
+  });
+  await page.route("**/api/receipts/receipt-resume/review", async (route) => {
+    const fields = Object.fromEntries(["company", "receipt_date", "address", "total", "currency"].map((field) => [field, { original_model_value: null, normalized_value: null, reviewer_corrected_value: null, effective_value: null, status: "missing", errors: [] }]));
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ receipt_id: "receipt-resume", status: "needs_review", fields, validation_errors: [] }) });
+  });
+  await page.clock.install();
+  await page.goto("/scan");
+  await page.getByLabel(/Drop a receipt here/).setInputFiles({ name: "resume.png", mimeType: "image/png", buffer: png });
+  await page.getByRole("button", { name: "Start extraction" }).click();
+  await expect.poll(() => jobReads).toBeGreaterThan(0);
+  await page.clock.fastForward(1_100);
+  await expect(page).toHaveURL(/review\/receipt-resume/);
+  expect(predictCalls).toBe(1);
+  expect(jobReads).toBeGreaterThanOrEqual(2);
+});
