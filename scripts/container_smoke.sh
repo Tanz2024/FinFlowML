@@ -46,8 +46,12 @@ while time.monotonic() < deadline:
     time.sleep(1)
 else:
     raise SystemExit(f"worker did not complete within {timeout} seconds")
-if status.json().get("model_id") and status.json()["model_id"] != os.environ.get("MODEL_ID", "Qwen/Qwen3-4B-Instruct-2507"):
-    raise SystemExit("unexpected model id; refusing to call this real inference")
+expected_model = os.environ.get("MODEL_ID", "Qwen/Qwen3-4B-Instruct-2507")
+expected_revision = os.environ.get("MODEL_REVISION", "cdbee75f17c01a7cc42f958dc650907174af0554")
+if status.json().get("model_id") != expected_model or status.json().get("model_revision") != expected_revision:
+    raise SystemExit("worker did not report the configured real model and revision")
+if not status.json().get("adapter_fingerprint"):
+    raise SystemExit("worker did not report an adapter fingerprint")
 review = s.get(base + f"/receipts/{receipt}/review")
 review.raise_for_status()
 field = review.json()["fields"]["company"]["effective_value"]

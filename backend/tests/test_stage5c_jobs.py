@@ -79,6 +79,24 @@ def test_four_field_model_prediction_detects_currency_from_total(client, client_
     assert receipt["status"] == "needs_review"
 
 
+def test_currency_conflict_between_model_and_ocr_requires_review(client, client_db, monkeypatch):
+    import backend.app.demo as demo
+    import ml.inference.predict as inference
+
+    monkeypatch.setattr(demo, "_uploaded_file", lambda body, content_type: ("receipt.jpg", b"currency-conflict"))
+    monkeypatch.setattr(inference, "predict_image", lambda *args, **kwargs: (
+        "TOTAL USD 12.50", "{}",
+        {"company": "Cafe", "date": "15/10/2026", "address": "Road", "total": "MYR 12.50", "currency": "MYR"}, None,
+    ))
+    payload = client.post("/predict", files={"receipt": ("receipt.jpg", b"ignored", "image/jpeg")}, headers={"Idempotency-Key": "currency-conflict-1"}).json()
+    claimed = claim_next(client_db)
+    process_job(client_db, claimed.id, claimed.lease_owner, claimed.fence)
+    receipt = client.get(f"/receipts/{payload['receipt_id']}").json()
+    assert receipt["raw_extracted_data"]["currency"] == "MYR"
+    assert receipt["extracted_data"]["currency"] is None
+    assert receipt["status"] == "needs_review"
+
+
 def test_idempotency_key_rejects_different_content(client, monkeypatch):
     import backend.app.demo as demo
     monkeypatch.setattr(demo, "_uploaded_file", lambda body, content_type: ("receipt.jpg", body))

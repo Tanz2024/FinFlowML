@@ -117,7 +117,15 @@ def process_job(db: Session, job_id: UUID, lease_owner: str | None = None, fence
             if prediction is None:
                 raise ValueError(parsing_error or "model output could not be parsed")
         normalized = {field: normalize_target(field, prediction.get(field)) for field in ("company", "date", "address", "total")}
-        normalized["currency"] = prediction.get("currency") or detect_explicit_currency(normalized.get("total"), ocr_text)
+        model_currency = detect_explicit_currency(prediction.get("currency"))
+        total_currency = detect_explicit_currency(prediction.get("total"))
+        ocr_currency = detect_explicit_currency(ocr_text)
+        observed_conflict = bool(total_currency and ocr_currency and total_currency != ocr_currency)
+        observed_currency = None if observed_conflict else total_currency or ocr_currency
+        if observed_conflict or (model_currency and observed_currency and model_currency != observed_currency):
+            normalized["currency"] = None
+        else:
+            normalized["currency"] = model_currency or observed_currency
         receipt.raw_extracted_data = dict(prediction)
         receipt.extracted_data = normalized
         receipt.company = normalized.get("company")
