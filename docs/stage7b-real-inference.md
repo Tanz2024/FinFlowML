@@ -124,3 +124,24 @@ package and image resolution. It does not prove NVIDIA driver access, CUDA
 initialization, model loading, OCR, or application-worker inference. The
 development Mac cannot execute this build locally when Docker is unavailable;
 the workflow must be run before treating the image as build-verified.
+
+## Disposable PostgreSQL regression run
+
+The CPU regression workflow starts an isolated PostgreSQL 16 service container,
+applies Alembic migrations to `finflowml_test`, and runs the PostgreSQL worker,
+approval-idempotency, and invoice-lock tests using only CI-created data. It has
+no access to production databases or volumes. To reproduce the same checks
+locally with a disposable container:
+
+```bash
+docker run --rm --name finflowml-pg-test \
+  -e POSTGRES_USER=finflowml -e POSTGRES_PASSWORD=ci-only-password \
+  -e POSTGRES_DB=finflowml_test -p 5432:5432 -d postgres:16
+export DATABASE_URL=postgresql+psycopg://finflowml:ci-only-password@localhost:5432/finflowml_test
+export FINFLOW_POSTGRES_TEST_URL="$DATABASE_URL"
+python -m alembic upgrade head
+python -m pytest -q backend/tests/test_postgres_integration.py
+docker rm -f finflowml-pg-test
+```
+
+This is separate from GPU acceptance and does not execute model inference.
