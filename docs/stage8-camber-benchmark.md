@@ -29,9 +29,11 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements-training.txt
-python -m pip install paddleocr paddlepaddle torch==2.6.0 \
+python -m pip install paddleocr==3.3.2 paddlepaddle==3.3.0 \
+  PyYAML==6.0.2 sympy==1.13.1 torch==2.6.0 \
   --index-url https://download.pytorch.org/whl/cu124 \
-  --extra-index-url https://pypi.org/simple
+  --extra-index-url https://pypi.org/simple \
+  --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cpu/
 nvidia-smi
 test -r "$ADAPTER_PATH/adapter_config.json"
 test -r "$ADAPTER_PATH/adapter_model.safetensors"
