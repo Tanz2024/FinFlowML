@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+const secureCookies = process.env.AUTH_COOKIE_SECURE === "true";
 export async function POST(request: Request) {
   const origin = request.headers.get("origin");
   const host = request.headers.get("host");
@@ -9,7 +10,7 @@ export async function POST(request: Request) {
       return new NextResponse("Cross-origin request rejected", { status: 403 });
     }
   }
-  const response = NextResponse.redirect(new URL("/login", request.url), 303);
-  for (const name of ["finflow_token", "finflow_role"]) response.cookies.set(name, "", { httpOnly: name === "finflow_token", sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 0 });
+  const response = new NextResponse(null, { status: 303, headers: { Location: "/login" } });
+  for (const name of ["finflow_token", "finflow_role"]) response.cookies.set(name, "", { httpOnly: name === "finflow_token", sameSite: "lax", secure: secureCookies, path: "/", maxAge: 0 });
   return response;
 }

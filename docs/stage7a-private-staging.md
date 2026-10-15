@@ -16,6 +16,8 @@ POSTGRES_DB=finflowml
 POSTGRES_USER=finflowml
 ENVIRONMENT=mock
 FINFLOW_MOCK_EXTRACTION=true
+# Keep false for plain HTTP local staging; set true only behind HTTPS.
+AUTH_COOKIE_SECURE=false
 ```
 
 Then run the explicit migration and startup sequence:
@@ -30,6 +32,17 @@ curl --fail http://127.0.0.1:8000/health
 curl --fail http://127.0.0.1:8000/ready
 curl --fail http://127.0.0.1:3000/login
 ```
+
+If ports 8000 or 3000 are already occupied, use loopback overrides consistently:
+
+```bash
+API_PORT=8010 FRONTEND_PORT=3010 docker compose --profile mock up -d api worker frontend
+curl --fail http://127.0.0.1:8010/health
+curl --fail http://127.0.0.1:3010/login
+```
+
+For HTTPS staging, terminate TLS at the reverse proxy and set
+`AUTH_COOKIE_SECURE=true`; do not expose the HTTP development binding publicly.
 
 The API/worker use the shared `receipt_uploads` volume. The frontend is a
 non-root Next standalone container and has no database or receipt-volume

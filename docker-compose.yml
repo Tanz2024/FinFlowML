@@ -32,7 +32,12 @@ services:
     build: .
     environment: *app-env
     command: ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-    ports: ["127.0.0.1:${API_PORT:-8000}:8000"]
+    ports:
+      - target: 8000
+        published: ${API_PORT:-8000}
+        host_ip: 127.0.0.1
+        protocol: tcp
+        mode: host
     depends_on: {migrations: {condition: service_completed_successfully}}
     volumes: [receipt_uploads:/data/uploads]
     healthcheck:
@@ -41,15 +46,22 @@ services:
       timeout: 5s
       retries: 12
     restart: unless-stopped
-    networks: [private]
+    networks: [private, edge]
     deploy: {resources: {limits: {cpus: "2.0", memory: 1G}}}
 
   frontend:
     build: ./frontend
     environment:
+      HOSTNAME: 0.0.0.0
       BACKEND_URL: http://api:8000
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
       NODE_ENV: production
-    ports: ["127.0.0.1:${FRONTEND_PORT:-3000}:3000"]
+    ports:
+      - target: 3000
+        published: ${FRONTEND_PORT:-3000}
+        host_ip: 127.0.0.1
+        protocol: tcp
+        mode: host
     depends_on: {api: {condition: service_healthy}}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
@@ -57,7 +69,7 @@ services:
       timeout: 5s
       retries: 12
     restart: unless-stopped
-    networks: [private]
+    networks: [private, edge]
     deploy: {resources: {limits: {cpus: "1.0", memory: 512M}}}
 
   worker:
@@ -76,3 +88,4 @@ volumes:
   receipt_uploads:
 networks:
   private: {internal: true}
+  edge: {}
