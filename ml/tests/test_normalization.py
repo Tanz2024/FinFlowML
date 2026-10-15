@@ -1,5 +1,5 @@
-from ml.data.normalize import normalize_date, normalize_target, normalize_total
 from backend.app.services.currency import detect_explicit_currency
+from ml.data.normalize import normalize_date, normalize_target, normalize_total
 
 
 def test_normalization_is_conservative():

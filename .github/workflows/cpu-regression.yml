@@ -21,10 +21,11 @@ jobs:
       - name: Install CPU test dependencies
         run: |
           python -m pip install -r requirements.txt
-          # Keep the repository's pinned resolver set intact; torch 2.6.0's
-          # stricter sympy pin is irrelevant to these mocked CPU tests.
-          python -m pip install --no-deps torch==2.6.0
-      - name: Run backend and ML tests
+          # Resolve a CPU wheel from the official PyTorch index, including its
+          # runtime dependencies. Do not install a CUDA wheel or use --no-deps.
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu \
+            --extra-index-url https://pypi.org/simple torch
+      - name: Run pytest
         run: python -m pytest -q backend/tests ml/tests
       - name: Run Ruff
-        run: ruff check backend ml scripts
+        run: python -m ruff check backend ml scripts

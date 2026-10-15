@@ -16,8 +16,8 @@ from backend.app.core.observability import elapsed_seconds, job_log
 from backend.app.models.extraction_job import ExtractionJob, ExtractionJobState
 from backend.app.models.receipt import Receipt
 from backend.app.services.audit import record_event
-from backend.app.services.receipt_review import store_extraction
 from backend.app.services.currency import detect_explicit_currency
+from backend.app.services.receipt_review import store_extraction
 from ml.data.normalize import normalize_target
 
 
