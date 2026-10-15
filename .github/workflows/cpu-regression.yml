@@ -42,7 +42,7 @@ jobs:
             --extra-index-url https://pypi.org/simple torch
       - name: Run pytest
         run: |
-          python -m alembic upgrade head
+          python -m alembic -c backend/alembic.ini upgrade head
           python -m pytest -q backend/tests ml/tests
       - name: Run Ruff
         run: python -m ruff check backend ml scripts
