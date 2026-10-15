@@ -145,3 +145,67 @@ docker rm -f finflowml-pg-test
 ```
 
 This is separate from GPU acceptance and does not execute model inference.
+
+## NVIDIA Linux acceptance sequence
+
+Run this only on an isolated Linux host with an approved synthetic receipt and
+the external adapter directory. Do not run the CPU/mock worker against the same
+database or queue.
+
+```bash
+# Host and toolkit evidence
+nvidia-smi
+docker run --rm --gpus all nvidia/cuda:12.4.1-runtime-ubuntu22.04 nvidia-smi
+nvidia-ctk runtime configure --runtime=docker
+docker info --format '{{json .Runtimes}}'
+
+# Private staging inputs; never commit these values
+export POSTGRES_PASSWORD='use-a-random-staging-secret'
+export AUTH_SECRET='use-a-random-secret-at-least-32-characters-long'
+export ADAPTER_PATH=/srv/finflowml/adapter
+test -r "$ADAPTER_PATH/adapter_config.json"
+test -r "$ADAPTER_PATH/adapter_model.safetensors"
+
+# Build, migrate, and start only the GPU profile
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile gpu build gpu-worker
+docker compose up -d db
+docker compose run --rm migrations
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile gpu up -d api gpu-worker
+docker compose ps
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml \
+  exec gpu-worker python /app/scripts/validate_gpu_runtime.py
+
+# Preload/verify pinned assets before restricting worker egress. The cache must
+# contain the pinned Qwen revision and PaddleOCR assets; do not log receipt data.
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml \
+  exec gpu-worker python - <<'PY'
+import os
+from pathlib import Path
+assert os.environ['FINFLOW_MOCK_EXTRACTION'].lower() == 'false'
+assert os.environ['MODEL_REVISION'] == 'cdbee75f17c01a7cc42f958dc650907174af0554'
+assert Path('/models/adapter/adapter_model.safetensors').is_file()
+assert Path('/models/adapter/adapter_config.json').is_file()
+PY
+
+# Real workflow: upload an authorized synthetic receipt, poll to completion,
+# inspect model evidence, review, correct only changed fields, approve once,
+# and assert exactly one expense. Repeat with a second receipt and record cold
+# versus warm timings and peak VRAM from nvidia-smi.
+SMOKE_TIMEOUT_SECONDS=900 SMOKE_RETRY_FAILED=true \
+  scripts/container_smoke.sh https://127.0.0.1:8000 /path/to/synthetic-receipt.png
+nvidia-smi --query-gpu=timestamp,memory.used,memory.total --format=csv
+
+# Recovery: restart only the worker, verify an expired lease is reclaimed, and
+# rerun the synthetic job. Confirm no duplicate expense or audit loss.
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml restart gpu-worker
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml logs --since=5m gpu-worker
+
+# Secure teardown; preserve only sanitized timing/status evidence.
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
+docker compose down
+```
+
+Acceptance requires positive non-mock job evidence (`model_id`, the pinned
+revision, and adapter fingerprint), successful OCR/Qwen parsing, human review,
+exactly-once approval, a second warm job, and recovery evidence. A standalone
+Colab result or a successful image build is insufficient.
